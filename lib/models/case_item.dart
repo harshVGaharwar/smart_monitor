@@ -1,0 +1,242 @@
+import 'package:flutter/material.dart';
+
+import '../theme/app_theme.dart';
+
+/// Where a record sits in the review workflow.
+enum CaseStatus {
+  pending('Pending'),
+  inReview('In Review'),
+  verified('Verified'),
+  completed('Completed'),
+  needClarification('Need Clarification');
+
+  final String label;
+  const CaseStatus(this.label);
+}
+
+/// What happened to a record. Carries its own presentation so the dashboard's
+/// Activity cell and the detail panel's audit timeline stay in step.
+enum ActivityType {
+  created('Record Created', Icons.circle, AppColors.textSecondary),
+  assigned('Assigned', Icons.arrow_forward_rounded, AppColors.primaryLight),
+  reassigned('Reassigned', Icons.swap_horiz_rounded, AppColors.warning),
+  commentAdded(
+    'Comment Added',
+    Icons.chat_bubble_outline_rounded,
+    Color(0xFF7C3AED),
+  ),
+  documentUploaded(
+    'Document Uploaded',
+    Icons.attach_file_rounded,
+    AppColors.textSecondary,
+  ),
+  verified('Verified', Icons.check_rounded, AppColors.success);
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  const ActivityType(this.label, this.icon, this.color);
+}
+
+/// The most recent thing that happened, shown in the grid's Activity column.
+class ActivityEntry {
+  final ActivityType type;
+  final DateTime at;
+
+  const ActivityEntry({required this.type, required this.at});
+}
+
+/// One entry in the audit history.
+class CaseActivity {
+  final ActivityType type;
+  final String actor;
+  final DateTime at;
+
+  /// Quoted under the heading for [ActivityType.commentAdded].
+  final String comment;
+
+  const CaseActivity({
+    required this.type,
+    required this.actor,
+    required this.at,
+    this.comment = '',
+  });
+}
+
+/// A note on the record's discussion thread.
+class CaseComment {
+  final String author;
+  final String text;
+  final DateTime at;
+
+  const CaseComment({
+    required this.author,
+    required this.text,
+    required this.at,
+  });
+
+  /// Up to two initials for the avatar, derived rather than stored.
+  String get initials => author
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty)
+      .take(2)
+      .map((w) => w[0].toUpperCase())
+      .join();
+
+  /// A stable colour per author, so the same person keeps the same avatar.
+  Color get avatarColor {
+    const palette = [
+      Color(0xFF0F9D8C),
+      Color(0xFF7C3AED),
+      Color(0xFF2E5AA0),
+      Color(0xFFC2410C),
+      Color(0xFFBE185D),
+      Color(0xFF15803D),
+    ];
+    return palette[author.hashCode.abs() % palette.length];
+  }
+}
+
+/// A file attached to a record.
+class CaseDocument {
+  final String name;
+  final String uploadedBy;
+  final DateTime uploadedAt;
+  final String version;
+
+  const CaseDocument({
+    required this.name,
+    required this.uploadedBy,
+    required this.uploadedAt,
+    this.version = 'v1.0',
+  });
+}
+
+/// A single health-check exception record.
+class CaseItem {
+  /// Business reference shown in the detail header, e.g. `EXC-02009`.
+  final String exceptionCode;
+
+  final String clientId;
+  final String customerName;
+  final String accountNo;
+  final String lineNo;
+
+  /// The check that raised the record, e.g. `FD Exceptions`.
+  final String healthCheckCategory;
+
+  /// What specifically failed, e.g. `Excess lien marked in Core`.
+  final String subCategory;
+
+  final String supportSystem;
+  final String coreSystem;
+  final String exceptionCategory;
+  final String reason;
+  final String segment;
+  final String facilitySrNo;
+  final String maker;
+  final String checker;
+  final DateTime? lsrmDate;
+
+  // Assignment
+  final String cpu;
+  final String team;
+  final String assignedBy;
+  final DateTime? assignedDate;
+  final String priority;
+
+  final CaseStatus status;
+
+  /// Latest event, for the grid's Activity column.
+  final ActivityEntry? lastActivity;
+
+  /// Latest note, for the grid's Updated column.
+  final String updatedNote;
+  final String updatedBy;
+  final DateTime? updatedAt;
+
+  final List<CaseComment> comments;
+  final List<CaseDocument> documents;
+  final List<CaseActivity> activity;
+
+  const CaseItem({
+    required this.exceptionCode,
+    required this.clientId,
+    required this.customerName,
+    required this.accountNo,
+    required this.status,
+    this.lineNo = '',
+    this.healthCheckCategory = 'FD Exceptions',
+    this.subCategory = '',
+    this.supportSystem = '',
+    this.coreSystem = '',
+    this.exceptionCategory = 'Exception',
+    this.reason = '',
+    this.segment = '',
+    this.facilitySrNo = '',
+    this.maker = '',
+    this.checker = '',
+    this.lsrmDate,
+    this.cpu = '',
+    this.team = '',
+    this.assignedBy = '',
+    this.assignedDate,
+    this.priority = '',
+    this.lastActivity,
+    this.updatedNote = '',
+    this.updatedBy = '',
+    this.updatedAt,
+    this.comments = const [],
+    this.documents = const [],
+    this.activity = const [],
+  });
+
+  /// Numeric part of [exceptionCode], used as a stable sort/identity key.
+  int get id =>
+      int.tryParse(exceptionCode.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+
+  CaseItem copyWith({
+    CaseStatus? status,
+    String? cpu,
+    String? team,
+    List<CaseComment>? comments,
+    List<CaseDocument>? documents,
+    List<CaseActivity>? activity,
+    ActivityEntry? lastActivity,
+    String? updatedNote,
+    String? updatedBy,
+    DateTime? updatedAt,
+  }) {
+    return CaseItem(
+      exceptionCode: exceptionCode,
+      clientId: clientId,
+      customerName: customerName,
+      accountNo: accountNo,
+      status: status ?? this.status,
+      lineNo: lineNo,
+      healthCheckCategory: healthCheckCategory,
+      subCategory: subCategory,
+      supportSystem: supportSystem,
+      coreSystem: coreSystem,
+      exceptionCategory: exceptionCategory,
+      reason: reason,
+      segment: segment,
+      facilitySrNo: facilitySrNo,
+      maker: maker,
+      checker: checker,
+      lsrmDate: lsrmDate,
+      cpu: cpu ?? this.cpu,
+      team: team ?? this.team,
+      assignedBy: assignedBy,
+      assignedDate: assignedDate,
+      priority: priority,
+      lastActivity: lastActivity ?? this.lastActivity,
+      updatedNote: updatedNote ?? this.updatedNote,
+      updatedBy: updatedBy ?? this.updatedBy,
+      updatedAt: updatedAt ?? this.updatedAt,
+      comments: comments ?? this.comments,
+      documents: documents ?? this.documents,
+      activity: activity ?? this.activity,
+    );
+  }
+}
