@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:csv/csv.dart' as csv;
-
 import '../models/case_item.dart';
+import 'csv_writer.dart';
 
 /// Builds the "Export Excel" download from the rows currently on screen.
 ///
@@ -63,7 +62,7 @@ class CaseExport {
           c.updatedNote,
         ],
     ];
-    return csv.Csv(lineDelimiter: '\r\n').encode(rows);
+    return CsvWriter.encode(rows);
   }
 
   /// UTF-8 with a BOM, so Excel picks up the encoding and renders accented

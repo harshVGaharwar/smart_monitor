@@ -1,4 +1,5 @@
 import '../data/mock_data.dart';
+import 'json.dart';
 
 /// A row read from an uploaded cases file.
 ///
@@ -73,6 +74,73 @@ class PendingCase {
        exceptionCategoryRaw = exceptionCategoryRaw ?? exceptionCategory,
        healthCheckCategoryRaw = healthCheckCategoryRaw ?? healthCheckCategory;
 
+  /// One row of an upload response.
+  ///
+  /// [sequence] is the row's position in the file, and the only source of
+  /// [id]: the response carries no id of its own, since a case is identified
+  /// by client id / account no / line no everywhere it matters.
+  ///
+  /// Validity is resolved here rather than trusted from the response: the
+  /// results table lets the user correct CPU / team / category cells, and each
+  /// edit has to move the row between "ready" and "needs attention" without
+  /// another round trip. A value the master data does not recognise is kept as
+  /// the file wrote it, so the report can show what was rejected.
+  factory PendingCase.fromJson(
+    Map<String, dynamic> json, {
+    required int sequence,
+  }) {
+    final cpuRaw = asText(json['cpu'] ?? json['unit']);
+    final teamRaw = asText(json['team'] ?? json['actionable_team']);
+    final categoryRaw = asText(json['exception_category']);
+    final healthCheckRaw = asText(
+      json['health_check_category'] ?? json['health_check'],
+    );
+
+    return PendingCase(
+      id: sequence,
+      clientId: asText(json['client_id']),
+      customerName: asText(json['customer_name']),
+      accountNo: asText(json['account_no']),
+      lineNo: asText(json['line_no']),
+      subCategory: asText(json['sub_category']),
+      supportSystem: asText(json['support_system']),
+      coreSystem: asText(json['core_system']),
+      segment: asText(json['segment']),
+      facilitySrNo: asText(json['facility_sr_no'] ?? json['facility_smo']),
+      maker: asText(json['maker']),
+      checker: asText(json['checker']),
+      lsSrmDate: asText(json['ls_srm_date'] ?? json['lsrm_date']),
+      healthCheckCategory:
+          matchOption(healthCheckRaw, MockData.healthCheckCategories) ??
+          healthCheckRaw,
+      healthCheckCategoryRaw: healthCheckRaw,
+      exceptionCategory:
+          matchOption(categoryRaw, MockData.exceptionCategories) ??
+          categoryRaw,
+      exceptionCategoryRaw: categoryRaw,
+      reason: asText(json['reason']),
+      cpu: matchOption(cpuRaw, MockData.cpus),
+      cpuRaw: cpuRaw,
+      actionableTeam: matchOption(teamRaw, MockData.teams),
+      teamRaw: teamRaw,
+    );
+  }
+
+  /// Resolves a free-text value onto one of [options], ignoring case and
+  /// punctuation. Returns null when the value isn't recognised, which sends
+  /// the row to the confirmation table.
+  static String? matchOption(String value, List<String> options) {
+    if (value.trim().isEmpty) return null;
+    final key = _normalise(value);
+    for (final option in options) {
+      if (_normalise(option) == key) return option;
+    }
+    return null;
+  }
+
+  static String _normalise(String s) =>
+      s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
   // --- Validation ---------------------------------------------------------
   //
   // Checked live rather than frozen at parse time: correcting a cell in the
@@ -102,6 +170,31 @@ class PendingCase {
   /// What the file said for a field, falling back to the resolved value.
   String get cpuDisplay => cpu ?? cpuRaw;
   String get teamDisplay => actionableTeam ?? teamRaw;
+
+  /// The row as the import endpoint expects it.
+  ///
+  /// Sends the *resolved* CPU and team rather than the raw text, so a value
+  /// the user corrected in the results table is what gets stored — and the
+  /// master data's spelling is what lands in the database, not the file's.
+  Map<String, dynamic> toJson() => {
+    'client_id': clientId,
+    'customer_name': customerName,
+    'account_no': accountNo,
+    'line_no': lineNo,
+    'health_check_category': healthCheckCategory,
+    'sub_category': subCategory,
+    'support_system': supportSystem,
+    'core_system': coreSystem,
+    'segment': segment,
+    'facility_sr_no': facilitySrNo,
+    'maker': maker,
+    'checker': checker,
+    'ls_srm_date': lsSrmDate,
+    'exception_category': exceptionCategory,
+    'reason': reason,
+    'cpu': cpu ?? '',
+    'team': actionableTeam ?? '',
+  };
 }
 
 /// Outcome of parsing an uploaded cases file: the data rows still in play.

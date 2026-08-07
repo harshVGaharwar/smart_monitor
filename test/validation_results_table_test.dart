@@ -42,10 +42,20 @@ final Finder _editors = find.byWidgetPredicate(
 
 Finder _editor(int column) => _editors.at(column);
 
-Widget _host(List<PendingCase> rows, {VoidCallback? onRowsChanged}) {
+Widget _host(
+  List<PendingCase> rows, {
+  VoidCallback? onRowsChanged,
+  ValueChanged<Set<PendingCase>>? onSelectionChanged,
+  ValueChanged<PendingCase>? onDeleteRow,
+}) {
   return MaterialApp(
     home: Scaffold(
-      body: ValidationResultsTable(rows: rows, onRowsChanged: onRowsChanged),
+      body: ValidationResultsTable(
+        rows: rows,
+        onRowsChanged: onRowsChanged,
+        onSelectionChanged: onSelectionChanged,
+        onDeleteRow: onDeleteRow,
+      ),
     ),
   );
 }
@@ -70,14 +80,15 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a valid row is editable but carries no checkbox or flag', (
+  testWidgets('a valid row is editable, selectable, and carries no flag', (
     tester,
   ) async {
     await tester.pumpWidget(_host([_row()]));
 
     expect(tester.takeException(), isNull);
-    // Only the header's select-all box; the clean row contributes none.
-    expect(find.byType(Checkbox), findsOneWidget);
+    // Header select-all plus the clean row's own box — a clean row is what
+    // the submit sends, so it has to be tickable.
+    expect(find.byType(Checkbox), findsNWidgets(2));
     expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
     // All four master-data cells stay pickable on a row the file got right.
     expect(_editors, findsNWidgets(4));
@@ -120,9 +131,59 @@ void main() {
     expect(row.cpu, 'Kolkata');
     expect(row.hasErrors, isFalse);
     expect(notified, 1);
-    // The row is clean now, so its flag and checkbox are gone.
+    // The flag goes, but the checkbox stays: having just fixed the row, the
+    // user's next move is to tick it and submit.
     expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
-    expect(find.byType(Checkbox), findsOneWidget);
+    expect(find.byType(Checkbox), findsNWidgets(2));
+  });
+
+  testWidgets('a tick survives the row being corrected', (tester) async {
+    tester.view.physicalSize = const Size(3100, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final row = _row(cpu: null, cpuRaw: 'Mumbai West');
+    var selection = <PendingCase>{};
+    await tester.pumpWidget(
+      _host([row], onSelectionChanged: (s) => selection = s),
+    );
+    await tester.pumpAndSettle();
+
+    // Tick the flagged row, then fix what was wrong with it.
+    await tester.tap(find.byType(Checkbox).last);
+    await tester.pumpAndSettle();
+    expect(selection, contains(row));
+
+    await tester.tap(_editor(_cpu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Kolkata').last);
+    await tester.pumpAndSettle();
+
+    // Turning clean must not silently drop it from what gets submitted.
+    expect(row.hasErrors, isFalse);
+    expect(selection, contains(row));
+  });
+
+  testWidgets('clean rows stay selectable after the last flagged row goes', (
+    tester,
+  ) async {
+    // Regression: checkboxes used to render only on flagged rows, so removing
+    // the last one left the page with nothing tickable at all.
+    final clean = _row(id: 1);
+    final flagged = _row(id: 2, cpu: null, cpuRaw: 'Mumbai West');
+    final rows = [clean, flagged];
+
+    await tester.pumpWidget(
+      _host(rows, onDeleteRow: (r) => rows.remove(r)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.delete_outline_rounded).last);
+    await tester.pumpAndSettle();
+
+    expect(rows, [clean]);
+    // Header select-all plus the surviving clean row.
+    expect(find.byType(Checkbox), findsNWidgets(2));
   });
 
   testWidgets('every row carries its own delete button', (tester) async {

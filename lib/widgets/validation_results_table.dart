@@ -189,10 +189,13 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
   }
 
   /// Re-checks validity after an inline edit and lets the parent's stats strip
-  /// follow. Selection is dropped for rows that just turned clean, since only
-  /// error rows carry a checkbox.
+  /// follow.
+  ///
+  /// A tick survives the row turning clean. Correcting a flagged row is
+  /// precisely when the user wants it in the submit, so dropping the
+  /// selection there would undo the thing they just did.
   void _rowEdited() {
-    setState(() => _selected.removeWhere((r) => !r.hasErrors));
+    setState(() {});
     widget.onRowsChanged?.call();
     widget.onSelectionChanged?.call({..._selected});
   }
@@ -258,6 +261,15 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
                 ],
               ),
               body: _body(pageRows),
+              overlay: pageRows.isEmpty
+                  ? const Text(
+                      'No rows match the current filters.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMuted,
+                      ),
+                    )
+                  : null,
             ),
           ),
           const Divider(height: 1, color: AppColors.border),
@@ -270,9 +282,10 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
   // --- Header + filters ---------------------------------------------------
 
   Widget _headerRow(List<PendingCase> pageRows) {
-    final errorRows = pageRows.where((r) => r.hasErrors).toList();
+    // Covers the page the user is looking at, clean rows included — ticking
+    // through to a submit is the common path, not just picking error rows.
     final allSelected =
-        errorRows.isNotEmpty && errorRows.every(_selected.contains);
+        pageRows.isNotEmpty && pageRows.every(_selected.contains);
 
     return Container(
       height: 44,
@@ -284,14 +297,14 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
             width: _checkboxWidth,
             child: _checkbox(
               value: allSelected,
-              onChanged: errorRows.isEmpty
+              onChanged: pageRows.isEmpty
                   ? null
                   : (v) {
                       setState(() {
                         if (v ?? false) {
-                          _selected.addAll(errorRows);
+                          _selected.addAll(pageRows);
                         } else {
-                          _selected.removeAll(errorRows);
+                          _selected.removeAll(pageRows);
                         }
                       });
                       widget.onSelectionChanged?.call({..._selected});
@@ -407,20 +420,9 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
     if (rows.isEmpty) {
       // Still a scroll view: the frame's scrollbar needs a live position on
       // [_vScroll], and an empty state would otherwise leave it unattached.
-      return ListView(
-        controller: _vScroll,
-        children: const [
-          Padding(
-            padding: EdgeInsets.all(28),
-            child: Center(
-              child: Text(
-                'No rows match the current filters.',
-                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
-              ),
-            ),
-          ),
-        ],
-      );
+      // The message itself is the frame's overlay, so that it centres on the
+      // viewport rather than on the full width of the columns.
+      return ListView(controller: _vScroll, children: const [SizedBox()]);
     }
 
     // The vertical scrollbar lives in TableScrollFrame, pinned to the card's
@@ -447,13 +449,13 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
         children: [
           SizedBox(
             width: _checkboxWidth,
-            // Only error rows can be exported, so only they carry a box.
-            child: flagged
-                ? _checkbox(
-                    value: _selected.contains(r),
-                    onChanged: (v) => _toggle(r, v ?? false),
-                  )
-                : const SizedBox.shrink(),
+            // Every row carries a box: the ticks drive the submit as well as
+            // the error export, so a row must stay selectable after the user
+            // corrects it — that is the point at which they want to send it.
+            child: _checkbox(
+              value: _selected.contains(r),
+              onChanged: (v) => _toggle(r, v ?? false),
+            ),
           ),
           for (final col in _cols)
             SizedBox(

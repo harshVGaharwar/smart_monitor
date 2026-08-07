@@ -26,6 +26,14 @@ class TableScrollFrame extends StatelessWidget {
   /// fields must turn this off, or a click that drifts is eaten by the pan.
   final bool mouseDrag;
 
+  /// Shown centred in the visible area, above the rows — for the empty state.
+  ///
+  /// Deliberately outside the horizontal scroll view: placed inside it, this
+  /// would centre itself across the full column width, which on a wide table
+  /// puts it off the right-hand edge of the viewport, and it would drift as
+  /// the user pans.
+  final Widget? overlay;
+
   const TableScrollFrame({
     super.key,
     required this.contentWidth,
@@ -34,6 +42,7 @@ class TableScrollFrame extends StatelessWidget {
     required this.header,
     required this.body,
     this.mouseDrag = true,
+    this.overlay,
   });
 
   /// Space reserved along each edge so the bars never sit on top of cells.
@@ -47,7 +56,7 @@ class TableScrollFrame extends StatelessWidget {
         final available = constraints.maxWidth - _gutter;
         final width = contentWidth < available ? available : contentWidth;
 
-        return ScrollbarTheme(
+        final frame = ScrollbarTheme(
           data: ScrollbarThemeData(
             thickness: const WidgetStatePropertyAll(_thickness),
             radius: const Radius.circular(5),
@@ -95,6 +104,21 @@ class TableScrollFrame extends StatelessWidget {
               ),
             ),
           ),
+        );
+
+        if (overlay == null) return frame;
+
+        // Sits over the whole frame rather than the row area alone: the header
+        // band is a fraction of an empty table's height, so the offset is not
+        // worth threading its height through for. Hit-testing stays with the
+        // frame so the scrollbars and filter row keep working underneath.
+        return Stack(
+          children: [
+            frame,
+            Positioned.fill(
+              child: IgnorePointer(child: Center(child: overlay)),
+            ),
+          ],
         );
       },
     );

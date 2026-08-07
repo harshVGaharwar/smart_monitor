@@ -1,42 +1,63 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:smart_monitor/services/cases_file_parser.dart';
+import 'package:smart_monitor/models/pending_case.dart';
 import 'package:smart_monitor/services/pending_case_export.dart';
 import 'package:smart_monitor/widgets/upload_cases_view.dart';
 
-const _headers = [
-  'Client id',
-  'Customer name',
-  'Account no',
-  'Line no',
-  'Health Check Category',
-  'Sub category',
-  'Support system',
-  'Core system',
-  'Segment',
-  'Facility Sr. no',
-  'Maker',
-  'Checker',
-  'LS SRM Date',
-  'Exception category',
-  'Reason',
-  'CPU',
-  'Actionable Team',
-];
-
-/// One clean row and one whose CPU and team the master data will reject.
-Uint8List _csv() {
-  final text = [
-    _headers.join(','),
-    '4943581,ACME,50200031339584,5,CAM Expiry Health Check,Sub,LMM,FC,Retail,1,mk,ck,'
-        '2026-07-21,Exception,Renewal pending,Mumbai,CAM Renewal Team',
-    '5120774,SUNRISE,50200044912307,2,LMM vs UBS Mismatch,SNA,LMM,nan,SME,2,mk,ck,'
-        '2026-07-22,Exception,Pending,Mumbai West,L1 Support',
-  ].join('\n');
-  return Uint8List.fromList(utf8.encode(text));
+/// The rows an upload response yields: one clean, and one whose CPU and team
+/// the master data rejects.
+///
+/// Built directly rather than parsed from a file — the server does the parsing
+/// now, so what is under test here is [UploadOutcome] and the error export.
+UploadOutcome _outcome() {
+  return UploadOutcome(
+    rows: [
+      PendingCase(
+        id: 1,
+        clientId: '4943581',
+        customerName: 'ACME',
+        accountNo: '50200031339584',
+        lineNo: '5',
+        healthCheckCategory: 'CAM Expiry Health Check',
+        subCategory: 'Sub',
+        supportSystem: 'LMM',
+        coreSystem: 'FC',
+        segment: 'Retail',
+        facilitySrNo: '1',
+        maker: 'mk',
+        checker: 'ck',
+        lsSrmDate: '2026-07-21',
+        exceptionCategory: 'Exception',
+        reason: 'Renewal pending',
+        cpu: 'Mumbai',
+        actionableTeam: 'Cam Renewal Team',
+      ),
+      PendingCase(
+        id: 2,
+        clientId: '5120774',
+        customerName: 'SUNRISE',
+        accountNo: '50200044912307',
+        lineNo: '2',
+        healthCheckCategory: 'LMM vs UBS Mismatch',
+        subCategory: 'SNA',
+        supportSystem: 'LMM',
+        coreSystem: '',
+        segment: 'SME',
+        facilitySrNo: '2',
+        maker: 'mk',
+        checker: 'ck',
+        lsSrmDate: '2026-07-22',
+        exceptionCategory: 'Exception',
+        reason: 'Pending',
+        // Unresolved against the master data, so the row lands in the report
+        // carrying what the file said.
+        cpu: null,
+        cpuRaw: 'Mumbai West',
+        actionableTeam: null,
+        teamRaw: 'L1 Support',
+      ),
+    ],
+  );
 }
 
 void main() {
@@ -148,7 +169,7 @@ void main() {
 
   group('parsed outcome', () {
     test('splits clean and flagged rows for the stats strip', () {
-      final out = CasesFileParser.parse(fileName: 'c.csv', bytes: _csv());
+      final out = _outcome();
 
       expect(out.processed, 2);
       expect(out.uploaded, 1);
@@ -165,7 +186,7 @@ void main() {
     });
 
     test('a removed row leaves the outcome and is never submitted', () {
-      final out = CasesFileParser.parse(fileName: 'c.csv', bytes: _csv());
+      final out = _outcome();
       final clean = out.valid.single;
 
       expect(out.removeRow(clean), 0);
@@ -184,7 +205,7 @@ void main() {
     });
 
     test('undo puts a removed row back where it was', () {
-      final out = CasesFileParser.parse(fileName: 'c.csv', bytes: _csv());
+      final out = _outcome();
       final first = out.rows.first;
 
       final index = out.removeRow(first);
@@ -198,7 +219,7 @@ void main() {
     });
 
     test('removing a flagged row clears the error it contributed', () {
-      final out = CasesFileParser.parse(fileName: 'c.csv', bytes: _csv());
+      final out = _outcome();
       expect(out.failed, hasLength(1));
 
       out.removeRow(out.failed.single);
@@ -210,7 +231,7 @@ void main() {
     });
 
     test('error export carries the rejected values and the reasons', () {
-      final out = CasesFileParser.parse(fileName: 'c.csv', bytes: _csv());
+      final out = _outcome();
       final csv = PendingCaseExport.buildCsv(out.failed);
 
       expect(csv, contains('Mumbai West'));
@@ -222,7 +243,7 @@ void main() {
     });
 
     test('the export is BOM-prefixed so Excel reads it as UTF-8', () {
-      final out = CasesFileParser.parse(fileName: 'c.csv', bytes: _csv());
+      final out = _outcome();
       final bytes = PendingCaseExport.buildCsvBytes(out.failed);
 
       expect(bytes.take(3), [0xEF, 0xBB, 0xBF]);

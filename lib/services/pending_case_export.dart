@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:csv/csv.dart' as csv;
-
 import '../models/pending_case.dart';
+import 'csv_writer.dart';
 
 /// Builds the "Download Error Data" file from rows that failed validation.
 ///
@@ -67,7 +66,7 @@ class PendingCaseExport {
           r.errorFields.join('; '),
         ],
     ];
-    return csv.Csv(lineDelimiter: '\r\n').encode(table);
+    return CsvWriter.encode(table);
   }
 
   /// UTF-8 with a BOM, so Excel picks up the encoding and renders accented

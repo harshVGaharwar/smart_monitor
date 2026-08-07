@@ -44,6 +44,7 @@ class ApiEndpoints {
   // Cases
   static const String cases = '/cases';
   static const String uploadCases = '/cases/upload';
+  static const String importCases = '/cases/import';
   static String caseById(int id) => '/cases/$id';
   static String caseMessages(int id) => '/cases/$id/messages';
   static String caseDocuments(int id) => '/cases/$id/documents';

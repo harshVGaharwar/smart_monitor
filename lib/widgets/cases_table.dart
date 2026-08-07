@@ -329,6 +329,15 @@ class _CasesTableState extends State<CasesTable> {
             mouseDrag: false,
             header: _headerRow(pageRows),
             body: _body(pageRows),
+            overlay: pageRows.isEmpty
+                ? const Text(
+                    'No records match the current filters.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textMuted,
+                    ),
+                  )
+                : null,
           ),
         ),
         const Divider(height: 1, color: AppColors.border),
@@ -527,20 +536,9 @@ class _CasesTableState extends State<CasesTable> {
     if (rows.isEmpty) {
       // Still a scroll view: the frame's scrollbar needs a live position on
       // [_vScroll], and an empty state would otherwise leave it unattached.
-      return ListView(
-        controller: _vScroll,
-        children: const [
-          Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(
-              child: Text(
-                'No records match the current filters.',
-                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
-              ),
-            ),
-          ),
-        ],
-      );
+      // The message itself is the frame's overlay, so that it centres on the
+      // viewport rather than on the full width of the columns.
+      return ListView(controller: _vScroll, children: const [SizedBox()]);
     }
 
     return ListView.separated(

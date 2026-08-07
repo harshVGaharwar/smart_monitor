@@ -4,8 +4,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/responsive.dart';
+import '../core/api_client.dart';
+import '../models/import_response.dart';
 import '../models/pending_case.dart';
-import '../services/cases_file_parser.dart';
+import '../models/upload_response.dart';
+import '../services/case_api.dart';
 import '../services/file_download.dart';
 import '../services/file_drop.dart';
 import '../services/pending_case_export.dart';
@@ -17,7 +20,11 @@ enum _Stage { idle, validating, results }
 /// Bulk case upload: pick a spreadsheet, watch it validate against the master
 /// data, then review every row before importing the clean ones.
 class UploadCasesView extends StatefulWidget {
-  const UploadCasesView({super.key});
+  const UploadCasesView({super.key, this.api});
+
+  /// Stand-in for the backend, supplied by tests. When null the view builds
+  /// its own client and closes it on dispose.
+  final CaseApi? api;
 
   @override
   State<UploadCasesView> createState() => _UploadCasesViewState();
@@ -25,9 +32,9 @@ class UploadCasesView extends StatefulWidget {
 
 class _UploadCasesViewState extends State<UploadCasesView>
     with SingleTickerProviderStateMixin {
-  // Legacy .xls is not a zip archive and cannot be read, so the picker does
-  // not offer it; a file dropped in anyway gets the parser's "save it as
-  // .xlsx" message rather than a silent failure.
+  // The picker offers the two formats the upload is specified for; a dropped
+  // .xls is still sent, and whether it can be read is the server's answer to
+  // give rather than a client-side guess.
   static const _allowedExtensions = ['xlsx', 'csv'];
   static const _droppableExtensions = ['xlsx', 'xls', 'csv'];
   static const _maxUploadBytes = 25 * 1024 * 1024; // 25 MB
@@ -82,7 +89,18 @@ class _UploadCasesViewState extends State<UploadCasesView>
 
   /// Rows ticked in the report — any row, clean or flagged.
   Set<PendingCase> _selected = {};
+
+  /// True while the import request is in flight, so the button cannot be hit
+  /// twice and write the same cases again.
+  bool _submitting = false;
   DateTime _validatedAt = DateTime.now();
+
+  /// The file is parsed server-side, so validating a file is a request.
+  ///
+  /// Only set when the view built the client itself — an injected [CaseApi]
+  /// belongs to the caller and must not be closed here.
+  ApiClient? _ownedClient;
+  late final CaseApi _api;
 
   /// Locates the drop zone so a page-level drop can be tested against it.
   final _dropzoneKey = GlobalKey();
@@ -92,6 +110,13 @@ class _UploadCasesViewState extends State<UploadCasesView>
   @override
   void initState() {
     super.initState();
+    final injected = widget.api;
+    if (injected != null) {
+      _api = injected;
+    } else {
+      _ownedClient = ApiClient();
+      _api = CaseApi(_ownedClient!);
+    }
     _progress = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1100),
@@ -111,6 +136,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
   void dispose() {
     _drop.cancel();
     _progress.dispose();
+    _ownedClient?.close();
     super.dispose();
   }
 
@@ -198,18 +224,16 @@ class _UploadCasesViewState extends State<UploadCasesView>
       ..reset()
       ..forward();
 
-    // Parsing is synchronous work on this isolate, so let the card paint one
-    // frame before it starts or the animation never appears.
-    await Future<void>.delayed(const Duration(milliseconds: 80));
-
-    UploadOutcome outcome;
+    // The server reads the workbook; the response model owns the parsing, so
+    // this screen only ever sees typed rows.
+    UploadCasesResponse response;
     try {
-      outcome = CasesFileParser.parse(fileName: name, bytes: bytes);
-    } on CasesFileException catch (e) {
+      response = await _api.uploadCasesFile(bytes: bytes, filename: name);
+    } on ApiException catch (e) {
       _failValidation(e.message);
       return;
     } on Object catch (e) {
-      _failValidation('Could not read $name: $e');
+      _failValidation('Could not upload $name: $e');
       return;
     }
     if (!mounted) return;
@@ -223,7 +247,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
 
     setState(() {
       _stage = _Stage.results;
-      _outcome = outcome;
+      _outcome = response.toOutcome();
       _validatedAt = DateTime.now();
     });
   }
@@ -293,22 +317,43 @@ class _UploadCasesViewState extends State<UploadCasesView>
     );
   }
 
-  /// Uploads whatever survived the review: the rows still in the report that
-  /// pass validation. Removed rows are already gone from [outcome], and rows
-  /// still carrying errors are left behind.
-  void _submit() {
+  /// Writes the reviewed rows to the database.
+  ///
+  /// Ticked rows are what gets imported; with nothing ticked the whole clean
+  /// set goes, which is the common case of accepting the file as validated.
+  /// Rows still carrying errors are never sent — a ticked flagged row is
+  /// dropped from the submit rather than silently stored half-valid.
+  Future<void> _submit() async {
     final outcome = _outcome;
-    if (outcome == null) return;
-    final valid = outcome.valid;
-    if (valid.isEmpty) {
+    if (outcome == null || _submitting) return;
+
+    final ticked = outcome.valid.where(_selected.contains).toList();
+    final rows = ticked.isEmpty ? outcome.valid : ticked;
+    if (rows.isEmpty) {
       _snack('No valid records to import.', AppColors.danger);
       return;
     }
-    final skipped = outcome.failed.length;
+
+    setState(() => _submitting = true);
+    final ImportCasesResponse result;
+    try {
+      result = await _api.importCases(rows);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _snack(e.message, AppColors.danger);
+      return;
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _snack('Could not import: $e', AppColors.danger);
+      return;
+    }
+    if (!mounted) return;
+
+    setState(() => _submitting = false);
     _snack(
-      skipped == 0
-          ? '${valid.length} case(s) imported'
-          : '${valid.length} case(s) imported · $skipped left unresolved',
+      result.summary(unresolved: outcome.failed.length),
       AppColors.success,
     );
     _reset();
@@ -459,7 +504,12 @@ class _UploadCasesViewState extends State<UploadCasesView>
   Widget _resultActions() {
     final outcome = _outcome;
     final hasErrors = outcome != null && outcome.failed.isNotEmpty;
-    final canSubmit = outcome != null && outcome.valid.isNotEmpty;
+    final canSubmit =
+        outcome != null && outcome.valid.isNotEmpty && !_submitting;
+    // What the button will actually send, so the label commits to a number
+    // before the user presses it.
+    final selectedCount =
+        outcome == null ? 0 : outcome.valid.where(_selected.contains).length;
 
     return Wrap(
       spacing: 10,
@@ -478,7 +528,12 @@ class _UploadCasesViewState extends State<UploadCasesView>
           onTap: hasErrors ? _downloadErrors : null,
         ),
         _filledAction(
-          label: 'Submit Data',
+          label:
+              _submitting
+                  ? 'Submitting…'
+                  : selectedCount > 0
+                  ? 'Submit $selectedCount Selected'
+                  : 'Submit Data',
           icon: Icons.check_circle_outline_rounded,
           onTap: canSubmit ? _submit : null,
         ),
@@ -494,29 +549,30 @@ class _UploadCasesViewState extends State<UploadCasesView>
     // at the viewport height instead: it centres while there is room, and
     // still scrolls once the expanded column list outgrows the screen.
     return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: constraints.maxHeight),
-          child: Center(
+      builder:
+          (context, constraints) => SingleChildScrollView(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 820),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (_error != null) ...[
-                    _errorBanner(),
-                    const SizedBox(height: 14),
-                  ],
-                  _dropzone(isMobile),
-                  const SizedBox(height: 16),
-                  _validatedFieldsPanel(),
-                ],
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 820),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_error != null) ...[
+                        _errorBanner(),
+                        const SizedBox(height: 14),
+                      ],
+                      _dropzone(isMobile),
+                      const SizedBox(height: 16),
+                      _validatedFieldsPanel(),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      ),
     );
   }
 
@@ -531,9 +587,10 @@ class _UploadCasesViewState extends State<UploadCasesView>
         child: CustomPaint(
           painter: _DashedBorderPainter(
             // Firms up under a dragged file so the target is unmistakable.
-            color: _draggingOver
-                ? AppColors.primaryLight
-                : AppColors.primaryLight.withValues(alpha: 0.6),
+            color:
+                _draggingOver
+                    ? AppColors.primaryLight
+                    : AppColors.primaryLight.withValues(alpha: 0.6),
             radius: 14,
             width: _draggingOver ? 2.2 : 1.6,
           ),
@@ -577,7 +634,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
                     _draggingOver
                         ? 'Drop the file to start validating.'
                         : 'Drag & drop your Excel file or browse to upload '
-                              'Health Check exception records for validation.',
+                            'Health Check exception records for validation.',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 13.5,
@@ -1097,15 +1154,16 @@ class _DashedBorderPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = width;
+    final paint =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = width;
 
-    final path = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(radius)),
-      );
+    final path =
+        Path()..addRRect(
+          RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(radius)),
+        );
 
     for (final metric in path.computeMetrics()) {
       var distance = 0.0;

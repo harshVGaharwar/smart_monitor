@@ -3,6 +3,9 @@ import 'dart:typed_data';
 import '../core/api_client.dart';
 import '../core/constants.dart';
 import '../models/case_item.dart';
+import '../models/import_response.dart';
+import '../models/pending_case.dart';
+import '../models/upload_response.dart';
 
 /// REST calls for the cases screens.
 ///
@@ -37,9 +40,12 @@ class CaseApi {
     );
 
     // Accept either a bare array or the common {data: [...]} envelope.
-    final rows = body is List
-        ? body
-        : (body is Map ? body['data'] ?? body['items'] ?? const [] : const []);
+    final rows =
+        body is List
+            ? body
+            : (body is Map
+                ? body['data'] ?? body['items'] ?? const []
+                : const []);
     return [
       for (final row in rows as List)
         if (row is Map<String, dynamic>) _caseFromJson(row),
@@ -91,9 +97,12 @@ class CaseApi {
 
   /// POST /cases/upload — the bulk spreadsheet.
   ///
-  /// Returns the raw response so the caller can read the accepted count and
-  /// the rows that need routing.
-  Future<Map<String, dynamic>> uploadCasesFile({
+  /// The server reads the workbook and returns the parsed rows; the app no
+  /// longer opens .xlsx/.csv itself. Validity is still decided here rather
+  /// than trusted from the response, because the results table lets the user
+  /// correct CPU / team / category cells and each edit has to move the row
+  /// between "ready" and "needs attention" straight away.
+  Future<UploadCasesResponse> uploadCasesFile({
     required Uint8List bytes,
     required String filename,
   }) async {
@@ -102,8 +111,43 @@ class CaseApi {
       bytes: bytes,
       filename: filename,
       field: 'file',
+      // Stated alongside the part rather than left to be re-derived: a browser
+      // upload can arrive with a filename the server cannot rely on.
+      fields: {'fileType': fileExtension(filename)},
     );
-    return body is Map<String, dynamic> ? body : const {};
+
+    final response = UploadCasesResponse.fromJson(body);
+    if (response.isEmpty) {
+      throw const ApiException('The file had no rows the server could read.');
+    }
+    return response;
+  }
+
+  /// POST /cases/import — persist the rows the user approved.
+  ///
+  /// The end of the upload flow: only rows that passed validation and were
+  /// not removed in the review are sent. Re-submitting a corrected file
+  /// updates the cases already stored rather than duplicating them.
+  Future<ImportCasesResponse> importCases(List<PendingCase> rows) async {
+    if (rows.isEmpty) {
+      throw const ApiException('There were no rows to import.');
+    }
+
+    final body = await _client.post(
+      ApiEndpoints.importCases,
+      body: {
+        'rows': [for (final row in rows) row.toJson()],
+      },
+    );
+    return ImportCasesResponse.fromJson(body, sentCount: rows.length);
+  }
+
+  /// The extension of [filename], lowercased and without the dot — `xlsx` for
+  /// `Health Check Aug.xlsx`. Empty when the name carries no extension.
+  static String fileExtension(String filename) {
+    final dot = filename.lastIndexOf('.');
+    if (dot < 0 || dot == filename.length - 1) return '';
+    return filename.substring(dot + 1).toLowerCase();
   }
 
   // --- Mapping ------------------------------------------------------------
@@ -142,36 +186,40 @@ class CaseApi {
       updatedNote: _str(json['updated_note'] ?? json['last_message']),
       updatedBy: _str(json['updated_by']),
       updatedAt: _date(json['updated_at']),
-      comments: _list(json['comments'] ?? json['messages'])
-          .map(
-            (m) => CaseComment(
-              author: _str(m['author']),
-              text: _str(m['text'] ?? m['message']),
-              at: _date(m['sent_at'] ?? m['created_at']) ?? DateTime.now(),
-            ),
-          )
-          .toList(),
-      documents: _list(json['documents'])
-          .map(
-            (d) => CaseDocument(
-              name: _str(d['name'] ?? d['filename']),
-              uploadedBy: _str(d['uploaded_by']),
-              uploadedAt:
-                  _date(d['uploaded_at'] ?? d['created_at']) ?? DateTime.now(),
-              version: _str(d['version'], fallback: 'v1.0'),
-            ),
-          )
-          .toList(),
-      activity: _list(json['activity'])
-          .map(
-            (a) => CaseActivity(
-              type: _activityType(_str(a['type'])),
-              actor: _str(a['actor'] ?? a['user']),
-              at: _date(a['at'] ?? a['created_at']) ?? DateTime.now(),
-              comment: _str(a['comment']),
-            ),
-          )
-          .toList(),
+      comments:
+          _list(json['comments'] ?? json['messages'])
+              .map(
+                (m) => CaseComment(
+                  author: _str(m['author']),
+                  text: _str(m['text'] ?? m['message']),
+                  at: _date(m['sent_at'] ?? m['created_at']) ?? DateTime.now(),
+                ),
+              )
+              .toList(),
+      documents:
+          _list(json['documents'])
+              .map(
+                (d) => CaseDocument(
+                  name: _str(d['name'] ?? d['filename']),
+                  uploadedBy: _str(d['uploaded_by']),
+                  uploadedAt:
+                      _date(d['uploaded_at'] ?? d['created_at']) ??
+                      DateTime.now(),
+                  version: _str(d['version'], fallback: 'v1.0'),
+                ),
+              )
+              .toList(),
+      activity:
+          _list(json['activity'])
+              .map(
+                (a) => CaseActivity(
+                  type: _activityType(_str(a['type'])),
+                  actor: _str(a['actor'] ?? a['user']),
+                  at: _date(a['at'] ?? a['created_at']) ?? DateTime.now(),
+                  comment: _str(a['comment']),
+                ),
+              )
+              .toList(),
     );
   }
 

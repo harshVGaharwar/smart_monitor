@@ -1,0 +1,20 @@
+name: backend
+description: A new Dart Frog application
+version: 1.0.0+1
+publish_to: none
+
+environment:
+  # Kept low deliberately: this has to build on the older toolchains the team
+  # runs, so nothing here may depend on a newer language feature.
+  sdk: ^3.6.1
+
+dependencies:
+  archive: ^3.6.1
+  dart_frog: ^1.1.0
+  sqlite3: ^3.5.1
+  xml: ^6.6.1
+
+dev_dependencies:
+  dart_frog_lint: ^0.1.0
+  mocktail: ^1.0.0
+  test: ^1.0.0
