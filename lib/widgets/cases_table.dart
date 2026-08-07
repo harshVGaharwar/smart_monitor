@@ -55,11 +55,13 @@ class _Col {
   bool get filterable => value != null;
 }
 
-/// The two buckets the STATUS filter slices on. A record awaiting action is
-/// the CPU's to clear today; the health-check bucket is named here so the
-/// filter can offer it before any row carries it.
-const String _pendingByCpu = 'Pending by CPU';
-const String _pendingByHealthCheck = 'Pending by Health Check';
+/// The statuses the STATUS filter always offers, whether or not a row is
+/// currently in one — they are part of the workflow, so a week where nobody
+/// happens to be waiting on the health checker should not make that choice
+/// disappear.
+final List<String> _statusOptions = [
+  for (final s in CaseStatus.assignable) s.label,
+];
 
 /// The dashboard record grid.
 class CasesTable extends StatefulWidget {
@@ -134,14 +136,11 @@ class _CasesTableState extends State<CasesTable> {
       value: (c) => c.team,
       cell: (c) => _plain(c.team),
     ),
-    // The badge keeps showing the workflow status; the filter slices on who a
-    // record is waiting on, which is a different question and only asked of
-    // the ones still open.
     _Col(
       label: 'STATUS',
       width: 150,
-      value: _pendingBucket,
-      options: const [_pendingByCpu, _pendingByHealthCheck],
+      value: _statusLabel,
+      options: _statusOptions,
       cell: (c) => Align(
         alignment: Alignment.centerLeft,
         child: StatusBadge(status: c.status),
@@ -229,11 +228,10 @@ class _CasesTableState extends State<CasesTable> {
     }).toList();
   }
 
-  /// Which bucket a record sits in for the STATUS filter. Everything still
-  /// open is the CPU's to action; anything already through review is waiting
-  /// on nobody and so matches neither bucket.
-  static String _pendingBucket(CaseItem c) =>
-      c.status == CaseStatus.pending ? _pendingByCpu : '';
+  /// What the STATUS filter slices on — the record's own status, the same
+  /// text the badge shows, so picking a value in the dropdown selects exactly
+  /// the rows displaying it.
+  static String _statusLabel(CaseItem c) => c.status.label;
 
   /// Distinct values for a column, so a filter never offers a choice that
   /// would yield nothing. Read from every row the page handed over, not from
@@ -244,10 +242,15 @@ class _CasesTableState extends State<CasesTable> {
   /// part of the workflow, so one goes on being offered through a week where
   /// no record happens to be in it.
   List<String> _optionsFor(_Col col) {
+    final present = <String>{for (final c in widget.cases) col.value!(c)}
+      ..removeWhere((v) => v.isEmpty);
     final fixed = col.options;
-    if (fixed != null) return fixed;
-    final set = <String>{for (final c in widget.cases) col.value!(c)};
-    return set.where((v) => v.isNotEmpty).toList()..sort();
+    if (fixed == null) return present.toList()..sort();
+
+    // Fixed choices first, in workflow order, then anything the data carries
+    // that they do not name — a record on a retired status must stay
+    // reachable rather than being filterable only by not filtering.
+    return [...fixed, ...(present.difference(fixed.toSet()).toList()..sort())];
   }
 
   List<CaseItem> get _sorted {

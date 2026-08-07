@@ -1,9 +1,25 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:smart_monitor/core/api_client.dart';
 import 'package:smart_monitor/data/mock_data.dart';
 import 'package:smart_monitor/models/case_item.dart';
+import 'package:smart_monitor/services/case_api.dart';
 import 'package:smart_monitor/theme/app_theme.dart';
 import 'package:smart_monitor/widgets/case_detail_panel.dart';
+
+/// A backend that accepts any write, so the panel's own behaviour is what
+/// these tests exercise rather than the transport.
+CaseApi _okApi() => CaseApi(
+  ApiClient(
+    client: MockClient(
+      (_) async => http.Response(jsonEncode({'updated': 1}), 200),
+    ),
+  ),
+);
 
 CaseItem get _record => MockData.cases.firstWhere(
   (c) => c.comments.isNotEmpty && c.documents.isNotEmpty,
@@ -13,6 +29,7 @@ Future<List<CaseItem>> _pumpPanel(
   WidgetTester tester, {
   CaseItem? record,
   CaseDetailTab tab = CaseDetailTab.basicInfo,
+  CaseApi? api,
 }) async {
   tester.view.physicalSize = const Size(700, 1400);
   tester.view.devicePixelRatio = 1.0;
@@ -29,6 +46,7 @@ Future<List<CaseItem>> _pumpPanel(
           currentUser: 'ninad.thakur',
           onChanged: changes.add,
           onClose: () {},
+          api: api ?? _okApi(),
         ),
       ),
     ),
@@ -158,25 +176,115 @@ void main() {
   testWidgets('verifying applies the chosen status and logs the audit entry', (
     tester,
   ) async {
-    final record = MockData.cases.firstWhere(
-      (c) => c.status != CaseStatus.verified,
-    );
+    final record = MockData.cases.first;
     final changes = await _pumpPanel(
       tester,
       record: record,
       tab: CaseDetailTab.verify,
     );
 
-    await tester.tap(find.text(record.status.label).last);
+    // A record carrying a legacy status opens on the first assignable one,
+    // since the older statuses can no longer be chosen.
+    await tester.tap(find.text(CaseStatus.pendingWithCpu.label).last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text(CaseStatus.verified.label).last);
+    await tester.tap(find.text(CaseStatus.pendingWithHealthChecker.label).last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Verify Record'));
     await tester.pumpAndSettle();
 
-    expect(changes.last.status, CaseStatus.verified);
+    expect(changes.last.status, CaseStatus.pendingWithHealthChecker);
     expect(changes.last.activity.last.type, ActivityType.verified);
+  });
+
+  testWidgets('the status dropdown offers only the two assignable statuses', (
+    tester,
+  ) async {
+    await _pumpPanel(
+      tester,
+      record: MockData.cases.first,
+      tab: CaseDetailTab.verify,
+    );
+
+    await tester.tap(find.text(CaseStatus.pendingWithCpu.label).last);
+    await tester.pumpAndSettle();
+
+    expect(find.text(CaseStatus.pendingWithHealthChecker.label), findsWidgets);
+    for (final gone in [
+      CaseStatus.inReview,
+      CaseStatus.verified,
+      CaseStatus.completed,
+      CaseStatus.needClarification,
+    ]) {
+      expect(find.text(gone.label), findsNothing, reason: gone.label);
+    }
+  });
+
+  testWidgets('verify posts the case with the chosen status', (tester) async {
+    final sent = <http.Request>[];
+    final api = CaseApi(
+      ApiClient(
+        client: MockClient((request) async {
+          sent.add(request);
+          return http.Response(jsonEncode({'updated': 1}), 200);
+        }),
+      ),
+    );
+
+    final record = MockData.cases.first;
+    await _pumpPanel(
+      tester,
+      record: record,
+      tab: CaseDetailTab.verify,
+      api: api,
+    );
+
+    await tester.tap(find.text(CaseStatus.pendingWithCpu.label).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(CaseStatus.pendingWithHealthChecker.label).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Verify Record'));
+    await tester.pumpAndSettle();
+
+    expect(sent, hasLength(1), reason: 'verify did not call the API');
+    expect(sent.single.url.path, endsWith('/cases/import'));
+
+    final body = jsonDecode(sent.single.body) as Map<String, dynamic>;
+    final row = (body['rows'] as List).single as Map<String, dynamic>;
+    expect(row['status'], 'Pending with Health Checker');
+    // The natural key has to travel, or the server cannot find the row.
+    expect(row['client_id'], record.clientId);
+    expect(row['account_no'], record.accountNo);
+    expect(row['line_no'], record.lineNo);
+  });
+
+  testWidgets('a failed verify keeps the record unchanged and says why', (
+    tester,
+  ) async {
+    final failing = CaseApi(
+      ApiClient(
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({'message': 'The database is unavailable.'}),
+            503,
+          ),
+        ),
+      ),
+    );
+
+    final changes = await _pumpPanel(
+      tester,
+      record: MockData.cases.first,
+      tab: CaseDetailTab.verify,
+      api: failing,
+    );
+
+    await tester.tap(find.text('Verify Record'));
+    await tester.pumpAndSettle();
+
+    // Nothing is claimed on screen that the server did not accept.
+    expect(changes, isEmpty);
+    expect(find.text('The database is unavailable.'), findsOneWidget);
   });
 
   testWidgets('documents list the version and uploader', (tester) async {

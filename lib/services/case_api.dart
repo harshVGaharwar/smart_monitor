@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import '../core/api_client.dart';
 import '../core/constants.dart';
 import '../models/case_item.dart';
+import '../models/cases_response.dart';
 import '../models/import_response.dart';
 import '../models/pending_case.dart';
 import '../models/upload_response.dart';
@@ -95,6 +96,15 @@ class CaseApi {
     );
   }
 
+  /// GET /get-smartpointer — every stored case, for the dashboard grid.
+  ///
+  /// Returns the rows shaped as the upload endpoint returns them, so the two
+  /// screens share one row contract.
+  Future<CasesResponse> fetchSmartPointer() async {
+    final body = await _client.get(ApiEndpoints.smartPointer);
+    return CasesResponse.fromJson(body);
+  }
+
   /// POST /cases/upload — the bulk spreadsheet.
   ///
   /// The server reads the workbook and returns the parsed rows; the app no
@@ -140,6 +150,22 @@ class CaseApi {
       },
     );
     return ImportCasesResponse.fromJson(body, sentCount: rows.length);
+  }
+
+  /// Writes one case back, through the same import endpoint the bulk submit
+  /// uses.
+  ///
+  /// It upserts on client id / account no / line no, so posting a single case
+  /// updates the stored row rather than adding another — which is what the
+  /// Verify tab needs when it changes a status.
+  Future<ImportCasesResponse> updateCase(CaseItem item) async {
+    final body = await _client.post(
+      ApiEndpoints.importCases,
+      body: {
+        'rows': [item.toJson()],
+      },
+    );
+    return ImportCasesResponse.fromJson(body, sentCount: 1);
   }
 
   /// The extension of [filename], lowercased and without the dot — `xlsx` for

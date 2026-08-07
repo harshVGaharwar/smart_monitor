@@ -43,6 +43,10 @@ Future<void> _pickFilter(
 ) async {
   await tester.tap(find.byType(SearchableDropdown<String>).at(index));
   await tester.pumpAndSettle();
+  // A long option list runs past the overlay's height, and an option below
+  // the fold is never built for a tap to find — so narrow it by search first.
+  await tester.enterText(find.byType(TextField).last, value);
+  await tester.pumpAndSettle();
   // The overlay paints over the grid, so its copy of the label is the last.
   await tester.tap(find.text(value).last);
   await tester.pumpAndSettle();
@@ -216,26 +220,30 @@ void main() {
     expect(_footerFor(both), findsOneWidget);
   });
 
-  testWidgets('the status filter slices on who a record waits on', (
+  testWidgets('the status filter slices on the status the badge shows', (
     tester,
   ) async {
     await _pumpTable(tester);
 
-    final open = MockData.cases
+    final pending = MockData.cases
         .where((c) => c.status == CaseStatus.pending)
         .length;
+    expect(pending, greaterThan(0), reason: 'fixture has no pending records');
 
-    // Customer, CPU, description, team, then status.
-    await _pickFilter(tester, 4, 'Pending by CPU');
-    expect(_footerFor(open), findsOneWidget);
+    // Customer, CPU, description, team, then status. A status no reviewer can
+    // assign any more is still filterable while records carry it.
+    await _pickFilter(tester, 4, CaseStatus.pending.label);
+    expect(_footerFor(pending), findsOneWidget);
   });
 
-  testWidgets('the health check bucket is offered while it is still empty', (
+  testWidgets('an assignable status is offered while it is still empty', (
     tester,
   ) async {
     await _pumpTable(tester);
 
-    await _pickFilter(tester, 4, 'Pending by Health Check');
+    // Nothing in the fixture is waiting on the health checker, but the choice
+    // is part of the workflow and has to stay on offer.
+    await _pickFilter(tester, 4, CaseStatus.pendingWithHealthChecker.label);
 
     expect(find.text('No records match the current filters.'), findsOneWidget);
     expect(_footerFor(0), findsOneWidget);

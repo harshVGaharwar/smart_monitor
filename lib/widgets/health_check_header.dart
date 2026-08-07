@@ -1,24 +1,39 @@
 import 'package:flutter/material.dart';
+import '../models/case_item.dart';
 import '../theme/app_theme.dart';
+import 'status_badge.dart';
 import '../theme/responsive.dart';
 
 /// Counts shown in the status summary strip.
 class StatusCounts {
   final int total;
-  final int pending;
-  final int inReview;
-  final int verified;
-  final int completed;
-  final int needsClarification;
 
-  const StatusCounts({
-    required this.total,
-    required this.pending,
-    required this.inReview,
-    required this.verified,
-    required this.completed,
-    required this.needsClarification,
-  });
+  /// How many records sit in each status. Driven by the data rather than a
+  /// fixed set of fields, so adding or retiring a status does not leave the
+  /// strip quietly reporting zeroes for buckets nothing uses.
+  final Map<CaseStatus, int> byStatus;
+
+  const StatusCounts({required this.total, required this.byStatus});
+
+  /// Counts [cases] into buckets.
+  factory StatusCounts.of(List<CaseItem> cases) {
+    final counts = <CaseStatus, int>{};
+    for (final c in cases) {
+      counts[c.status] = (counts[c.status] ?? 0) + 1;
+    }
+    return StatusCounts(total: cases.length, byStatus: counts);
+  }
+
+  int operator [](CaseStatus status) => byStatus[status] ?? 0;
+
+  /// The statuses the strip lists: every one a reviewer can assign, so a
+  /// bucket standing empty still reads as zero rather than vanishing, plus
+  /// any retired status some record still carries.
+  List<CaseStatus> get shown => [
+    ...CaseStatus.assignable,
+    for (final s in CaseStatus.values)
+      if (!CaseStatus.assignable.contains(s) && (byStatus[s] ?? 0) > 0) s,
+  ];
 }
 
 /// Dashboard header: title and live summary, search, status counts, and the
@@ -136,9 +151,12 @@ class HealthCheckHeader extends StatelessWidget {
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        _inlineStat(counts.pending, 'pending'),
+        _inlineStat(counts[CaseStatus.pendingWithCpu], 'with CPU'),
         _dot(),
-        _inlineStat(counts.inReview, 'in review'),
+        _inlineStat(
+          counts[CaseStatus.pendingWithHealthChecker],
+          'with health checker',
+        ),
         _dot(),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -297,15 +315,14 @@ class HealthCheckHeader extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _count(counts.total, 'Total', AppColors.textPrimary),
-              _count(counts.pending, 'Pending', AppColors.warning),
-              _count(counts.inReview, 'In Review', AppColors.info),
-              _count(counts.verified, 'Verified', AppColors.success),
-              _count(counts.completed, 'Completed', AppColors.textSecondary),
-              _count(
-                counts.needsClarification,
-                'Needs Clarification',
-                AppColors.danger,
-              ),
+              // Tinted from the badge mapping, so a bucket here and the chip
+              // on its rows never drift to different colours.
+              for (final status in counts.shown)
+                _count(
+                  counts[status],
+                  status.label,
+                  StatusBadge.colorsFor(status).$1,
+                ),
             ],
           ),
           Row(

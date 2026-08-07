@@ -68,7 +68,7 @@ class CasesRepository {
     _db.execute('''
       CREATE TABLE IF NOT EXISTS cases (
         ${_columns.map((c) => '$c TEXT NOT NULL DEFAULT ""').join(',\n        ')},
-        status TEXT NOT NULL DEFAULT 'Pending',
+        status TEXT NOT NULL DEFAULT '$_defaultStatus',
         imported_at TEXT NOT NULL,
         PRIMARY KEY (client_id, account_no, line_no)
       )
@@ -90,14 +90,15 @@ class CasesRepository {
         .join(', ');
 
     final existing = _db.prepare(
-      'SELECT 1 FROM cases WHERE client_id = ? AND account_no = ? '
+      'SELECT status FROM cases WHERE client_id = ? AND account_no = ? '
       'AND line_no = ? LIMIT 1',
     );
     final upsert = _db.prepare('''
-      INSERT INTO cases (${_columns.join(', ')}, imported_at)
-      VALUES ($placeholders, ?)
+      INSERT INTO cases (${_columns.join(', ')}, status, imported_at)
+      VALUES ($placeholders, ?, ?)
       ON CONFLICT (client_id, account_no, line_no) DO UPDATE SET
         $assignments,
+        status = excluded.status,
         imported_at = excluded.imported_at
     ''');
 
@@ -109,13 +110,24 @@ class CasesRepository {
     try {
       for (final row in rows) {
         final values = [for (final c in _columns) _text(row[c])];
-        final wasThere = existing.select([
+        final prior = existing.select([
           _text(row['client_id']),
           _text(row['account_no']),
           _text(row['line_no']),
-        ]).isNotEmpty;
+        ]);
+        final wasThere = prior.isNotEmpty;
 
-        upsert.execute([...values, now]);
+        // A row that states no status must not overwrite one. An upload file
+        // never carries a status, so writing blindly would send a case the
+        // reviewer had already moved on straight back to the default.
+        final incoming = _text(row['status']);
+        final status = incoming.isNotEmpty
+            ? incoming
+            : (wasThere
+                  ? _text(prior.first['status'], fallback: _defaultStatus)
+                  : _defaultStatus);
+
+        upsert.execute([...values, status, now]);
         if (wasThere) {
           updated++;
         } else {
@@ -154,7 +166,14 @@ class CasesRepository {
 
   static const _naturalKey = {'client_id', 'account_no', 'line_no'};
 
+  /// Where a case sits before anyone has reviewed it.
+  static const _defaultStatus = 'Pending with CPU';
+
   /// Everything is stored as text — the upload has no types to preserve, and
   /// an account number must never be rounded into a double.
-  static String _text(Object? value) => value == null ? '' : '$value'.trim();
+  static String _text(Object? value, {String fallback = ''}) {
+    if (value == null) return fallback;
+    final text = '$value'.trim();
+    return text.isEmpty ? fallback : text;
+  }
 }

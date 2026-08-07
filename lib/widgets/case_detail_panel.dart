@@ -1,9 +1,11 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../core/api_client.dart';
 import '../core/constants.dart';
 import '../data/mock_data.dart';
 import '../models/case_item.dart';
+import '../services/case_api.dart';
 import '../theme/app_theme.dart';
 import 'searchable_dropdown.dart';
 import 'status_badge.dart';
@@ -33,6 +35,10 @@ class CaseDetailPanel extends StatefulWidget {
 
   final VoidCallback onClose;
 
+  /// Used to write a verified record back. Supplied by the dashboard, which
+  /// already owns a client; tests pass a stand-in.
+  final CaseApi api;
+
   const CaseDetailPanel({
     super.key,
     required this.caseItem,
@@ -40,6 +46,7 @@ class CaseDetailPanel extends StatefulWidget {
     required this.currentUser,
     required this.onChanged,
     required this.onClose,
+    required this.api,
   });
 
   @override
@@ -62,6 +69,10 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
 
   /// Files staged on the Verify and Reassign tabs before submitting.
   final List<PlatformFile> _verifyFiles = [];
+
+  /// True while the verify write is in flight, so the button cannot be hit
+  /// twice and post the same case again.
+  bool _verifying = false;
   final List<PlatformFile> _reassignFiles = [];
   String? _error;
 
@@ -69,7 +80,7 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
   void initState() {
     super.initState();
     _case = widget.caseItem;
-    _verifyStatus = _case.status;
+    _verifyStatus = _assignable(_case.status);
     _tabs = TabController(
       length: CaseDetailTab.values.length,
       vsync: this,
@@ -86,7 +97,7 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
     // The drawer is reused across rows; reset when a different record opens.
     if (oldWidget.caseItem.exceptionCode != widget.caseItem.exceptionCode) {
       _case = widget.caseItem;
-      _verifyStatus = _case.status;
+      _verifyStatus = _assignable(_case.status);
       _verifyCommentCtrl.clear();
       _reassignCommentCtrl.clear();
       _commentCtrl.clear();
@@ -120,6 +131,16 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
         .map((w) => '${w[0].toUpperCase()}${w.substring(1)}')
         .join(' ');
   }
+
+  /// The status the Verify dropdown should start on.
+  ///
+  /// A record carrying a legacy status has nothing to select — the dropdown
+  /// asserts on a value outside its options — so it falls back to the first
+  /// one a reviewer can actually assign.
+  static CaseStatus _assignable(CaseStatus status) =>
+      CaseStatus.assignable.contains(status)
+      ? status
+      : CaseStatus.assignable.first;
 
   void _apply(CaseItem updated) {
     setState(() => _case = updated);
@@ -171,7 +192,8 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
     });
   }
 
-  void _verifyRecord() {
+  Future<void> _verifyRecord() async {
+    if (_verifying) return;
     final now = DateTime.now();
     final documents = [
       ..._case.documents,
@@ -185,34 +207,55 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
     ];
     final comment = _verifyCommentCtrl.text.trim();
 
-    _apply(
-      _case.copyWith(
-        status: _verifyStatus,
-        documents: documents,
-        comments: comment.isEmpty
-            ? _case.comments
-            : [
-                CaseComment(author: _displayName, text: comment, at: now),
-                ..._case.comments,
-              ],
-        activity: [
-          ..._case.activity,
-          CaseActivity(
-            type: ActivityType.verified,
-            actor: _displayName,
-            at: now,
-            comment: comment,
-          ),
-        ],
-        lastActivity: ActivityEntry(type: ActivityType.verified, at: now),
-        updatedNote: comment.isEmpty ? 'Record verified.' : comment,
-        updatedBy: _displayName,
-        updatedAt: now,
-      ),
+    final updated = _case.copyWith(
+      status: _verifyStatus,
+      documents: documents,
+      comments: comment.isEmpty
+          ? _case.comments
+          : [
+              CaseComment(author: _displayName, text: comment, at: now),
+              ..._case.comments,
+            ],
+      activity: [
+        ..._case.activity,
+        CaseActivity(
+          type: ActivityType.verified,
+          actor: _displayName,
+          at: now,
+          comment: comment,
+        ),
+      ],
+      lastActivity: ActivityEntry(type: ActivityType.verified, at: now),
+      updatedNote: comment.isEmpty ? 'Record verified.' : comment,
+      updatedBy: _displayName,
+      updatedAt: now,
     );
 
+    // Written to the server before the panel claims anything: a status that
+    // only ever changed on screen would be gone on the next load, and the
+    // reviewer would have no way to tell.
+    setState(() => _verifying = true);
+    try {
+      await widget.api.updateCase(updated);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _verifying = false);
+      _toast(e.message, success: false);
+      return;
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() => _verifying = false);
+      _toast('Could not save the status: $e', success: false);
+      return;
+    }
+    if (!mounted) return;
+
+    setState(() {
+      _verifying = false;
+      _verifyFiles.clear();
+    });
+    _apply(updated);
     _verifyCommentCtrl.clear();
-    setState(() => _verifyFiles.clear());
     _toast('${_case.exceptionCode} set to ${_verifyStatus.label}');
   }
 
@@ -640,7 +683,9 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
         _dropdown<CaseStatus>(
           value: _verifyStatus,
           hint: 'Select status',
-          options: CaseStatus.values,
+          // Only the two a reviewer can hand a case on to. The older statuses
+          // still render on a record that carries one, but cannot be chosen.
+          options: CaseStatus.assignable,
           labelOf: (s) => s.label,
           onChanged: (v) => setState(() => _verifyStatus = v ?? _verifyStatus),
         ),

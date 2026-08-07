@@ -11,7 +11,29 @@ final _repository = CasesRepository(
 );
 
 Handler middleware(Handler handler) {
-  return handler.use(_cors).use(provider<CasesRepository>((_) => _repository));
+  return handler
+      .use(_requestLog)
+      .use(_cors)
+      .use(provider<CasesRepository>((_) => _repository));
+}
+
+/// One line per request, so "did the app actually call this?" is answerable
+/// without a proxy. The production build has no request log of its own.
+Middleware get _requestLog {
+  return (handler) {
+    return (context) async {
+      final started = DateTime.now();
+      final request = context.request;
+      final response = await handler(context);
+      final ms = DateTime.now().difference(started).inMilliseconds;
+      // ignore: avoid_print
+      print(
+        '${request.method.value.toUpperCase()} ${request.uri.path} '
+        '→ ${response.statusCode} (${ms}ms)',
+      );
+      return response;
+    };
+  };
 }
 
 /// Browser clients are served from the Flutter dev server on a different port,

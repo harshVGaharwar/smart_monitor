@@ -25,3 +25,10 @@ String asText(Object? value, {String fallback = ''}) {
   if (text.isEmpty || text == 'null' || text == 'nan') return fallback;
   return text;
 }
+
+/// [value] as a date, or null when it is absent or unparseable.
+DateTime? asDate(Object? value) {
+  if (value == null) return null;
+  if (value is DateTime) return value;
+  return DateTime.tryParse('$value');
+}

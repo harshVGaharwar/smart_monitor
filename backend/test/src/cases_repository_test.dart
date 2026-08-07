@@ -104,6 +104,53 @@ void main() {
       expect(DateTime.tryParse(stamp), isNotNull);
     });
 
+    group('status', () {
+      test('defaults for a case nobody has reviewed yet', () {
+        repo.importRows([_row()]);
+
+        expect(repo.allCases().single['status'], 'Pending with CPU');
+      });
+
+      test('a stated status is stored', () {
+        repo.importRows([
+          {..._row(), 'status': 'Pending with Health Checker'},
+        ]);
+
+        expect(
+          repo.allCases().single['status'],
+          'Pending with Health Checker',
+        );
+      });
+
+      test('a stated status overwrites the stored one', () {
+        repo
+          ..importRows([_row()])
+          ..importRows([
+            {..._row(), 'status': 'Pending with Health Checker'},
+          ]);
+
+        expect(
+          repo.allCases().single['status'],
+          'Pending with Health Checker',
+        );
+        expect(repo.count(), 1);
+      });
+
+      test('a row stating no status leaves the stored one alone', () {
+        repo
+          ..importRows([
+            {..._row(), 'status': 'Pending with Health Checker'},
+          ])
+          // What re-uploading the spreadsheet looks like: no status column.
+          ..importRows([_row(reason: 'Corrected reason')]);
+
+        final stored = repo.allCases().single;
+        // Regression: this used to reset a reviewed case back to the default.
+        expect(stored['status'], 'Pending with Health Checker');
+        expect(stored['reason'], 'Corrected reason');
+      });
+    });
+
     test('importing nothing is a no-op', () {
       final result = repo.importRows([]);
 

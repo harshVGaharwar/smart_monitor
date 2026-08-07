@@ -45,6 +45,10 @@ class StatusBadge extends StatelessWidget {
   /// Foreground and background for a status. Public so the grid and the detail
   /// panel tint matching chips without duplicating the mapping.
   static (Color, Color) colorsFor(CaseStatus s) => switch (s) {
+    // The two a reviewer can set. Both are "waiting on someone", so they share
+    // the pending tint and are told apart by their label.
+    CaseStatus.pendingWithCpu => (AppColors.warning, AppColors.warningBg),
+    CaseStatus.pendingWithHealthChecker => (AppColors.info, AppColors.infoBg),
     CaseStatus.pending => (AppColors.warning, AppColors.warningBg),
     CaseStatus.inReview => (AppColors.info, AppColors.infoBg),
     CaseStatus.verified => (AppColors.success, AppColors.successBg),

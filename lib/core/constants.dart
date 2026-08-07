@@ -43,6 +43,9 @@ class ApiEndpoints {
   static const String logout = '/auth/logout';
   // Cases
   static const String cases = '/cases';
+
+  /// Every stored case, for the dashboard grid.
+  static const String smartPointer = '/get-smartpointer';
   static const String uploadCases = '/cases/upload';
   static const String importCases = '/cases/import';
   static String caseById(int id) => '/cases/$id';

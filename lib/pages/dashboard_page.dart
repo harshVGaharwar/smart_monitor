@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/responsive.dart';
 import '../data/mock_data.dart';
+import '../core/api_client.dart';
 import '../models/case_item.dart';
+import '../services/case_api.dart';
 import '../services/case_export.dart';
 import '../services/file_download.dart';
 import '../widgets/app_sidebar.dart';
@@ -15,7 +17,12 @@ import 'login_page.dart';
 
 class DashboardPage extends StatefulWidget {
   final String user;
-  const DashboardPage({super.key, required this.user});
+
+  /// Stand-in for the backend, supplied by tests. When null the page builds
+  /// its own client and closes it on dispose.
+  final CaseApi? api;
+
+  const DashboardPage({super.key, required this.user, this.api});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -34,18 +41,81 @@ class _DashboardPageState extends State<DashboardPage> {
   String _search = '';
   DateTime _lastUpdated = DateTime.now();
 
+  /// The cases the grid shows, as `/get-smartpointer` returned them.
+  List<CaseItem> _cases = const [];
+
+  /// True while the fetch is in flight. Only blanks the grid on the first
+  /// load — a refresh keeps the rows on screen so the page does not flash
+  /// empty every time it reloads.
+  bool _loading = true;
+  bool _loaded = false;
+
+  /// Why the last fetch failed, shown above the grid with a retry.
+  String? _loadError;
+
+  /// Only set when the page built the client itself — an injected [CaseApi]
+  /// belongs to the caller and must not be closed here.
+  ApiClient? _ownedClient;
+  late final CaseApi _api;
+
   /// Record shown in the end drawer, and which of its tabs is open.
   CaseItem? _selectedCase;
   CaseDetailTab _selectedTab = CaseDetailTab.basicInfo;
 
   @override
+  void initState() {
+    super.initState();
+    final injected = widget.api;
+    if (injected != null) {
+      _api = injected;
+    } else {
+      _ownedClient = ApiClient();
+      _api = CaseApi(_ownedClient!);
+    }
+    _load();
+  }
+
+  @override
   void dispose() {
     _searchCtrl.dispose();
+    _ownedClient?.close();
     super.dispose();
   }
 
+  /// Pulls the stored cases in. Errors are shown rather than thrown: the rest
+  /// of the page still works, and the banner carries the retry.
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
+    try {
+      final response = await _api.fetchSmartPointer();
+      if (!mounted) return;
+      setState(() {
+        _cases = response.cases;
+        _loading = false;
+        _loaded = true;
+        _lastUpdated = DateTime.now();
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = e.message;
+      });
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = 'Could not load cases: $e';
+      });
+    }
+  }
+
   List<CaseItem> get _visibleCases {
-    return MockData.cases.where((c) {
+    return _cases.where((c) {
       if (_search.isNotEmpty) {
         final q = _search.toLowerCase();
         final hay =
@@ -60,20 +130,9 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   /// Summary buckets for the header strip, one per status.
-  StatusCounts get _counts {
-    final rows = _visibleCases;
-    int count(CaseStatus s) => rows.where((c) => c.status == s).length;
-    return StatusCounts(
-      total: rows.length,
-      pending: count(CaseStatus.pending),
-      inReview: count(CaseStatus.inReview),
-      verified: count(CaseStatus.verified),
-      completed: count(CaseStatus.completed),
-      needsClarification: count(CaseStatus.needClarification),
-    );
-  }
+  StatusCounts get _counts => StatusCounts.of(_visibleCases);
 
-  void _refresh() => setState(() => _lastUpdated = DateTime.now());
+  void _refresh() => _load();
 
   void _exportExcel() {
     final rows = _visibleCases;
@@ -118,10 +177,14 @@ class _DashboardPageState extends State<DashboardPage> {
   /// Panel edits are written back to the in-memory list so the row behind the
   /// drawer reflects them immediately.
   void _onCaseChanged(CaseItem updated) {
-    final index = MockData.cases.indexWhere(
+    final index = _cases.indexWhere(
       (c) => c.exceptionCode == updated.exceptionCode,
     );
-    if (index >= 0) MockData.cases[index] = updated;
+    if (index >= 0) {
+      // Copied rather than mutated in place: the fetched list is replaced
+      // wholesale on the next load, and setState needs a new list to notice.
+      _cases = [..._cases]..[index] = updated;
+    }
     setState(() {
       _selectedCase = updated;
       _lastUpdated = DateTime.now();
@@ -167,32 +230,35 @@ class _DashboardPageState extends State<DashboardPage> {
       key: _scaffoldKey,
       // Matches the expanded rail's own width, so the drawer neither clips the
       // labels nor leaves a dead strip beside them.
-      drawer: isMobile
-          ? Drawer(
-              width: 244,
-              backgroundColor: Colors.transparent,
-              child: sidebar,
-            )
-          : null,
+      drawer:
+          isMobile
+              ? Drawer(
+                width: 244,
+                backgroundColor: Colors.transparent,
+                child: sidebar,
+              )
+              : null,
       // The record detail opens over the list rather than replacing it, so the
       // user keeps their place in the grid.
-      endDrawer: selected == null
-          ? null
-          : Drawer(
-              width: context.screenWidth < 700 ? context.screenWidth : 640,
-              backgroundColor: AppColors.surface,
-              shape: const RoundedRectangleBorder(),
-              child: SafeArea(
-                child: CaseDetailPanel(
-                  key: ValueKey(selected.exceptionCode),
-                  caseItem: selected,
-                  initialTab: _selectedTab,
-                  currentUser: widget.user,
-                  onChanged: _onCaseChanged,
-                  onClose: () => Navigator.of(context).maybePop(),
+      endDrawer:
+          selected == null
+              ? null
+              : Drawer(
+                width: context.screenWidth < 700 ? context.screenWidth : 640,
+                backgroundColor: AppColors.surface,
+                shape: const RoundedRectangleBorder(),
+                child: SafeArea(
+                  child: CaseDetailPanel(
+                    key: ValueKey(selected.exceptionCode),
+                    caseItem: selected,
+                    initialTab: _selectedTab,
+                    currentUser: widget.user,
+                    onChanged: _onCaseChanged,
+                    onClose: () => Navigator.of(context).maybePop(),
+                    api: _api,
+                  ),
                 ),
               ),
-            ),
       onEndDrawerChanged: (open) {
         // Drop the selection when the drawer closes so a stale record is not
         // rebuilt behind the scrim on the next open.
@@ -297,10 +363,53 @@ class _DashboardPageState extends State<DashboardPage> {
           hasNotifications: true,
         ),
         SizedBox(height: isMobile ? 12 : 16),
+        if (_loadError != null) ...[
+          _loadErrorBanner(_loadError!),
+          SizedBox(height: isMobile ? 12 : 16),
+        ],
         // Table fills remaining height; its rows scroll internally while the
         // footer stays fixed. Column filters live in the table's own header.
-        Expanded(child: CasesTable(cases: rows, onOpenCase: _openCase)),
+        Expanded(
+          // Only the very first load blanks the grid. A refresh keeps the rows
+          // on screen, so the page does not flash empty on every reload.
+          child:
+              _loading && !_loaded
+                  ? const Center(child: CircularProgressIndicator())
+                  : CasesTable(cases: rows, onOpenCase: _openCase),
+        ),
       ],
+    );
+  }
+
+  Widget _loadErrorBanner(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.dangerBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 18,
+            color: AppColors.danger,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 13, color: AppColors.danger),
+            ),
+          ),
+          TextButton(
+            onPressed: _loading ? null : _load,
+            child: Text(_loading ? 'Retrying…' : 'Retry'),
+          ),
+        ],
+      ),
     );
   }
 }

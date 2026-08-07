@@ -1,13 +1,58 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:smart_monitor/core/api_client.dart';
 import 'package:smart_monitor/data/mock_data.dart';
 import 'package:smart_monitor/models/case_item.dart';
 import 'package:smart_monitor/pages/dashboard_page.dart';
+import 'package:smart_monitor/services/case_api.dart';
 import 'package:smart_monitor/services/case_export.dart';
 import 'package:smart_monitor/theme/app_theme.dart';
 import 'package:smart_monitor/widgets/health_check_header.dart';
 
-Future<void> _pumpDashboard(WidgetTester tester, {double width = 1700}) async {
+/// A backend serving [MockData.cases] the way `/get-smartpointer` would, so
+/// the page under test shows the same records these assertions compare with.
+CaseApi _api({List<CaseItem>? cases, int status = 200, String? error}) {
+  final rows = [
+    for (final c in cases ?? MockData.cases)
+      {
+        'exception_code': c.exceptionCode,
+        'client_id': c.clientId,
+        'customer_name': c.customerName,
+        'account_no': c.accountNo,
+        'line_no': c.lineNo,
+        'health_check_category': c.healthCheckCategory,
+        'sub_category': c.subCategory,
+        'support_system': c.supportSystem,
+        'core_system': c.coreSystem,
+        'exception_category': c.exceptionCategory,
+        'reason': c.reason,
+        'segment': c.segment,
+        'facility_sr_no': c.facilitySrNo,
+        'maker': c.maker,
+        'checker': c.checker,
+        'cpu': c.cpu,
+        'team': c.team,
+        'status': c.status.label,
+      },
+  ];
+  final body = error != null
+      ? jsonEncode({'message': error})
+      : jsonEncode({'rows': rows, 'count': rows.length});
+
+  return CaseApi(
+    ApiClient(client: MockClient((_) async => http.Response(body, status))),
+  );
+}
+
+Future<void> _pumpDashboard(
+  WidgetTester tester, {
+  double width = 1700,
+  CaseApi? api,
+}) async {
   tester.view.physicalSize = Size(width, 1200);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -15,7 +60,7 @@ Future<void> _pumpDashboard(WidgetTester tester, {double width = 1700}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: AppTheme.light,
-      home: const DashboardPage(user: 'ninad.thakur'),
+      home: DashboardPage(user: 'ninad.thakur', api: api ?? _api()),
     ),
   );
   await tester.pumpAndSettle();
@@ -29,39 +74,34 @@ void main() {
 
     expect(find.text('Health Check Dashboard'), findsOneWidget);
 
-    // Counts are derived from the data, not hardcoded.
+    // Counts are derived from the data, not hardcoded — and the buckets are
+    // driven by the statuses themselves, so this follows the enum rather than
+    // restating a fixed five.
     final all = MockData.cases;
-    final pending = all.where((c) => c.status == CaseStatus.pending).length;
-    final verified = all.where((c) => c.status == CaseStatus.verified).length;
-
-    final inReview = all.where((c) => c.status == CaseStatus.inReview).length;
-    final completed = all.where((c) => c.status == CaseStatus.completed).length;
-    final needsClarification = all
-        .where((c) => c.status == CaseStatus.needClarification)
-        .length;
+    final counts = StatusCounts.of(all);
 
     // The counts strip uses RichText so the number and label can carry
     // different colours; findRichText matches on the joined span text, which
     // pins the number to its label.
-    for (final entry in {
-      '${all.length} Total': 'total',
-      '$pending Pending': 'pending',
-      '$inReview In Review': 'in review',
-      '$verified Verified': 'verified',
-      '$completed Completed': 'completed',
-      '$needsClarification Needs Clarification': 'needs clarification',
-    }.entries) {
+    expect(
+      find.text('${all.length} Total', findRichText: true),
+      findsOneWidget,
+      reason: 'total count wrong or missing',
+    );
+    for (final status in counts.shown) {
       expect(
-        find.text(entry.key, findRichText: true),
+        find.text('${counts[status]} ${status.label}', findRichText: true),
         findsOneWidget,
-        reason: '${entry.value} count wrong or missing',
+        reason: '${status.label} count wrong or missing',
       );
     }
+    // Every status a reviewer can assign is listed even at zero.
+    expect(counts.shown, containsAll(CaseStatus.assignable));
+
     expect(
       find.text('${all.length} record${all.length == 1 ? '' : 's'}'),
       findsOneWidget,
     );
-    expect(pending + verified, lessThanOrEqualTo(all.length));
     expect(find.text('Export Excel'), findsOneWidget);
   });
 
@@ -141,7 +181,20 @@ void main() {
     // Wider than the other cases on purpose: the test font draws every glyph
     // as a square, so the counts strip measures nearly twice what it does
     // with a real face and would wrap at a width no real screen wraps at.
-    await _pumpDashboard(tester, width: 2100);
+    //
+    // The fixture carries only the two statuses a reviewer can assign, which
+    // is what stored data looks like — the retired ones exist in MockData
+    // alone, and listing all seven would wrap the strip over a layout no user
+    // ever sees.
+    final live = [
+      for (final (i, c) in MockData.cases.indexed)
+        c.copyWith(
+          status: i.isEven
+              ? CaseStatus.pendingWithCpu
+              : CaseStatus.pendingWithHealthChecker,
+        ),
+    ];
+    await _pumpDashboard(tester, width: 2100, api: _api(cases: live));
 
     final header = tester.getRect(find.byType(HealthCheckHeader));
     final total = tester.getRect(find.text('16 Total', findRichText: true));
