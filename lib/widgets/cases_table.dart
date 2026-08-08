@@ -141,17 +141,13 @@ class _CasesTableState extends State<CasesTable> {
       width: 150,
       value: _statusLabel,
       options: _statusOptions,
-      cell: (c) => Align(
-        alignment: Alignment.centerLeft,
-        child: StatusBadge(status: c.status),
-      ),
+      cell:
+          (c) => Align(
+            alignment: Alignment.centerLeft,
+            child: StatusBadge(status: c.status),
+          ),
     ),
-    _Col(
-      label: 'DATE',
-      width: 130,
-      sort: _SortKey.date,
-      cell: _dateCell,
-    ),
+    _Col(label: 'DATE', width: 130, sort: _SortKey.date, cell: _dateCell),
     _Col(
       label: 'ACTIVITY',
       width: 150,
@@ -210,10 +206,33 @@ class _CasesTableState extends State<CasesTable> {
       _rowPadding * 2;
 
   @override
+  void didUpdateWidget(CasesTable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A reload can drop rows the user had ticked. Their codes would otherwise
+    // sit in the set for good, counted in the footer with nothing on screen to
+    // untick them by.
+    if (!identical(oldWidget.cases, widget.cases)) _pruneSelection();
+  }
+
+  @override
   void dispose() {
     _hScroll.dispose();
     _vScroll.dispose();
     super.dispose();
+  }
+
+  /// Drops selections for rows the filters no longer show.
+  ///
+  /// Selection is scoped to what is currently on offer, not to every row the
+  /// page has ever handed over: a tick the user cannot see is one they cannot
+  /// clear, and it would go on inflating the count — and travel into whatever
+  /// a bulk action does next — from behind a filter they have since changed.
+  /// Paging is deliberately not part of that: the other pages of the same
+  /// filtered set are still reachable without touching a filter.
+  void _pruneSelection() {
+    if (_selected.isEmpty) return;
+    final visible = {for (final c in _filtered) c.exceptionCode};
+    _selected.removeWhere((code) => !visible.contains(code));
   }
 
   /// The rows left after the column filters, before sorting.
@@ -238,19 +257,19 @@ class _CasesTableState extends State<CasesTable> {
   /// [_filtered] — a dropdown that shed its options as soon as a sibling
   /// filter was set would be a one-way trip.
   ///
-  /// A column declaring [_Col.options] keeps them verbatim: those choices are
-  /// part of the workflow, so one goes on being offered through a week where
-  /// no record happens to be in it.
+  /// A column declaring [_Col.options] offers exactly those and nothing else:
+  /// they are the workflow's own list, so one goes on being offered through a
+  /// week where no record happens to be in it, and a value the data carries
+  /// that the workflow does not name never joins them. STATUS is the reason —
+  /// the dashboard has two statuses, and a stray value arriving on a row must
+  /// not quietly become a third choice in the dropdown.
   List<String> _optionsFor(_Col col) {
+    final fixed = col.options;
+    if (fixed != null) return fixed;
+
     final present = <String>{for (final c in widget.cases) col.value!(c)}
       ..removeWhere((v) => v.isEmpty);
-    final fixed = col.options;
-    if (fixed == null) return present.toList()..sort();
-
-    // Fixed choices first, in workflow order, then anything the data carries
-    // that they do not name — a record on a retired status must stay
-    // reachable rather than being filterable only by not filtering.
-    return [...fixed, ...(present.difference(fixed.toSet()).toList()..sort())];
+    return present.toList()..sort();
   }
 
   List<CaseItem> get _sorted {
@@ -275,8 +294,8 @@ class _CasesTableState extends State<CasesTable> {
       // Client and account read as numbers to the user, so sort them that way;
       // the date column sorts chronologically rather than by its printed form.
       final r = switch (_sortKey) {
-        _SortKey.client || _SortKey.account =>
-          (int.tryParse(keyOf(a)) ?? 0).compareTo(int.tryParse(keyOf(b)) ?? 0),
+        _SortKey.client || _SortKey.account => (int.tryParse(keyOf(a)) ?? 0)
+            .compareTo(int.tryParse(keyOf(b)) ?? 0),
         // Records without a date sort to the bottom of the ascending list.
         _SortKey.date => (_rowDate(a) ?? DateTime(0)).compareTo(
           _rowDate(b) ?? DateTime(0),
@@ -330,17 +349,18 @@ class _CasesTableState extends State<CasesTable> {
             // clicks that open them. Panning stays on the scrollbar, the wheel
             // and trackpad swipes — same trade the upload table makes.
             mouseDrag: false,
-            header: _headerRow(pageRows),
+            header: _headerRow(rows),
             body: _body(pageRows),
-            overlay: pageRows.isEmpty
-                ? const Text(
-                    'No records match the current filters.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textMuted,
-                    ),
-                  )
-                : null,
+            overlay:
+                pageRows.isEmpty
+                    ? const Text(
+                      'No records match the current filters.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textMuted,
+                      ),
+                    )
+                    : null,
           ),
         ),
         const Divider(height: 1, color: AppColors.border),
@@ -351,10 +371,16 @@ class _CasesTableState extends State<CasesTable> {
 
   // --- Header -------------------------------------------------------------
 
-  Widget _headerRow(List<CaseItem> pageRows) {
+  Widget _headerRow(List<CaseItem> rows) {
+    // Governs everything the filters currently show, not just the ten on
+    // screen: a box that ticked one page at a time left the rest selected
+    // behind the pager, where unticking it could not reach them.
     final allSelected =
-        pageRows.isNotEmpty &&
-        pageRows.every((c) => _selected.contains(c.exceptionCode));
+        rows.isNotEmpty &&
+        rows.every((c) => _selected.contains(c.exceptionCode));
+    // Tristate so a part-selected grid does not read as an empty one, which is
+    // what made a single row's tick look like it had done nothing.
+    final anySelected = rows.any((c) => _selected.contains(c.exceptionCode));
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -368,16 +394,18 @@ class _CasesTableState extends State<CasesTable> {
               SizedBox(
                 width: _checkboxWidth,
                 child: _checkbox(
-                  value: allSelected,
-                  onChanged: (v) => setState(() {
-                    for (final c in pageRows) {
-                      if (v ?? false) {
-                        _selected.add(c.exceptionCode);
-                      } else {
-                        _selected.remove(c.exceptionCode);
-                      }
-                    }
-                  }),
+                  value: allSelected ? true : (anySelected ? null : false),
+                  tristate: true,
+                  onChanged:
+                      (v) => setState(() {
+                        // Null is the indeterminate leg of the cycle; from there
+                        // the useful move is to finish selecting, not to clear.
+                        if (v ?? false) {
+                          _selected.addAll(rows.map((c) => c.exceptionCode));
+                        } else {
+                          _selected.removeAll(rows.map((c) => c.exceptionCode));
+                        }
+                      }),
                 ),
               ),
               for (final col in _cols)
@@ -420,9 +448,10 @@ class _CasesTableState extends State<CasesTable> {
               width: col.width,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: col.filterable
-                    ? _filterDropdown(col)
-                    : const SizedBox.shrink(),
+                child:
+                    col.filterable
+                        ? _filterDropdown(col)
+                        : const SizedBox.shrink(),
               ),
             ),
           const SizedBox(width: _actionsWidth),
@@ -454,14 +483,16 @@ class _CasesTableState extends State<CasesTable> {
         fontWeight: FontWeight.w500,
         color: AppColors.textPrimary,
       ),
-      onChanged: (v) => setState(() {
-        if (v == null) {
-          _filters.remove(col.label);
-        } else {
-          _filters[col.label] = v;
-        }
-        _page = 0;
-      }),
+      onChanged:
+          (v) => setState(() {
+            if (v == null) {
+              _filters.remove(col.label);
+            } else {
+              _filters[col.label] = v;
+            }
+            _page = 0;
+            _pruneSelection();
+          }),
     );
   }
 
@@ -499,8 +530,8 @@ class _CasesTableState extends State<CasesTable> {
             Icon(
               active
                   ? (_sortAsc
-                        ? Icons.arrow_upward_rounded
-                        : Icons.arrow_downward_rounded)
+                      ? Icons.arrow_upward_rounded
+                      : Icons.arrow_downward_rounded)
                   : Icons.unfold_more_rounded,
               size: 13,
               color: active ? AppColors.textPrimary : AppColors.textMuted,
@@ -512,8 +543,9 @@ class _CasesTableState extends State<CasesTable> {
   }
 
   Widget _checkbox({
-    required bool value,
+    required bool? value,
     required ValueChanged<bool?> onChanged,
+    bool tristate = false,
   }) {
     return Align(
       alignment: Alignment.centerLeft,
@@ -522,6 +554,7 @@ class _CasesTableState extends State<CasesTable> {
         height: 24,
         child: Checkbox(
           value: value,
+          tristate: tristate,
           visualDensity: VisualDensity.compact,
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           activeColor: AppColors.primary,
@@ -547,8 +580,8 @@ class _CasesTableState extends State<CasesTable> {
     return ListView.separated(
       controller: _vScroll,
       itemCount: rows.length,
-      separatorBuilder: (_, _) =>
-          const Divider(height: 1, color: AppColors.border),
+      separatorBuilder:
+          (_, _) => const Divider(height: 1, color: AppColors.border),
       itemBuilder: (_, i) => _dataRow(rows[i], i),
     );
   }
@@ -567,13 +600,14 @@ class _CasesTableState extends State<CasesTable> {
             width: _checkboxWidth,
             child: _checkbox(
               value: _selected.contains(c.exceptionCode),
-              onChanged: (v) => setState(() {
-                if (v ?? false) {
-                  _selected.add(c.exceptionCode);
-                } else {
-                  _selected.remove(c.exceptionCode);
-                }
-              }),
+              onChanged:
+                  (v) => setState(() {
+                    if (v ?? false) {
+                      _selected.add(c.exceptionCode);
+                    } else {
+                      _selected.remove(c.exceptionCode);
+                    }
+                  }),
             ),
           ),
           for (final col in _cols)
@@ -699,9 +733,8 @@ class _CasesTableState extends State<CasesTable> {
   /// there is something to read.
   Widget _messageCell(CaseItem c) {
     final count = c.comments.length;
-    final label = count == 0
-        ? 'No Messages'
-        : '$count Message${count == 1 ? '' : 's'}';
+    final label =
+        count == 0 ? 'No Messages' : '$count Message${count == 1 ? '' : 's'}';
     final color = count == 0 ? AppColors.textMuted : AppColors.primaryLight;
 
     return Align(
@@ -901,9 +934,10 @@ class _CasesTableState extends State<CasesTable> {
                 label: 'Prev',
                 icon: Icons.arrow_back_rounded,
                 enabled: _page > 0,
-                onTap: () => setState(() {
-                  if (_page > 0) _page--;
-                }),
+                onTap:
+                    () => setState(() {
+                      if (_page > 0) _page--;
+                    }),
               ),
               // Flexible so the pager still fits a phone-width footer: this
               // label gives way before the Prev/Next buttons do.
@@ -926,9 +960,10 @@ class _CasesTableState extends State<CasesTable> {
                 icon: Icons.arrow_forward_rounded,
                 iconTrailing: true,
                 enabled: _page < totalPages - 1,
-                onTap: () => setState(() {
-                  if (_page < totalPages - 1) _page++;
-                }),
+                onTap:
+                    () => setState(() {
+                      if (_page < totalPages - 1) _page++;
+                    }),
               ),
             ],
           ),

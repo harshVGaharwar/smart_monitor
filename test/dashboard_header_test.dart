@@ -31,7 +31,7 @@ CaseApi _api({List<CaseItem>? cases, int status = 200, String? error}) {
         'exception_category': c.exceptionCategory,
         'reason': c.reason,
         'segment': c.segment,
-        'facility_sr_no': c.facilitySrNo,
+        'facility_sr_no': c.srNo,
         'maker': c.maker,
         'checker': c.checker,
         'cpu': c.cpu,
@@ -39,9 +39,10 @@ CaseApi _api({List<CaseItem>? cases, int status = 200, String? error}) {
         'status': c.status.label,
       },
   ];
-  final body = error != null
-      ? jsonEncode({'message': error})
-      : jsonEncode({'rows': rows, 'count': rows.length});
+  final body =
+      error != null
+          ? jsonEncode({'message': error})
+          : jsonEncode({'rows': rows, 'count': rows.length});
 
   return CaseApi(
     ApiClient(client: MockClient((_) async => http.Response(body, status))),
@@ -129,13 +130,14 @@ void main() {
     await tester.enterText(find.byType(TextField).first, target.customerName);
     await tester.pumpAndSettle();
 
-    final expected = MockData.cases
-        .where(
-          (c) => c.customerName.toLowerCase().contains(
-            target.customerName.toLowerCase(),
-          ),
-        )
-        .length;
+    final expected =
+        MockData.cases
+            .where(
+              (c) => c.customerName.toLowerCase().contains(
+                target.customerName.toLowerCase(),
+              ),
+            )
+            .length;
 
     expect(expected, greaterThan(0));
     expect(
@@ -189,9 +191,10 @@ void main() {
     final live = [
       for (final (i, c) in MockData.cases.indexed)
         c.copyWith(
-          status: i.isEven
-              ? CaseStatus.pendingWithCpu
-              : CaseStatus.pendingWithHealthChecker,
+          status:
+              i.isEven
+                  ? CaseStatus.pendingWithCpu
+                  : CaseStatus.pendingWithHealthChecker,
         ),
     ];
     await _pumpDashboard(tester, width: 2100, api: _api(cases: live));

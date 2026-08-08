@@ -20,6 +20,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:smart_monitor/core/api_client.dart';
+import 'package:smart_monitor/core/constants.dart';
 import 'package:smart_monitor/services/case_api.dart';
 import 'package:smart_monitor/widgets/upload_cases_view.dart';
 
@@ -57,7 +58,7 @@ CaseApi _api(int rowCount) {
   return CaseApi(
     ApiClient(
       client: MockClient((request) async {
-        if (!request.url.path.endsWith('/import')) {
+        if (!request.url.path.endsWith(ApiEndpoints.upddateCase)) {
           return http.Response(body, 200);
         }
         _sent.add(request);
@@ -75,9 +76,7 @@ CaseApi _api(int rowCount) {
 /// The rows the last submit sent to the import endpoint.
 List<Map<String, dynamic>> _importedRows() {
   final body = jsonDecode(_sent.last.body) as Map<String, dynamic>;
-  return [
-    for (final row in body['rows'] as List) row as Map<String, dynamic>,
-  ];
+  return [for (final row in body['rows'] as List) row as Map<String, dynamic>];
 }
 
 /// The picker only has to produce bytes; the stub ignores them.
@@ -206,7 +205,7 @@ void main() {
     final api = CaseApi(
       ApiClient(
         client: MockClient((request) async {
-          if (!request.url.path.endsWith('/import')) {
+          if (!request.url.path.endsWith(ApiEndpoints.upddateCase)) {
             return http.Response(rows, 200);
           }
           return http.Response(
@@ -332,5 +331,36 @@ void main() {
 
     expect(find.text('Cust3'), findsOneWidget, reason: 'second undo failed');
     expect(find.text('Cust2'), findsNothing, reason: 'first delete came back');
+  });
+
+  testWidgets('an unexpected response shape says so, not "no rows"', (
+    tester,
+  ) async {
+    FilePickerPlatform.instance = _FakePicker(_bytes());
+    // A 200 that is not this app's contract — a proxy page, another backend.
+    final api = CaseApi(
+      ApiClient(
+        client: MockClient(
+          (_) async =>
+              http.Response(jsonEncode({'ok': true, 'data2': []}), 200),
+        ),
+      ),
+    );
+
+    tester.view.physicalSize = const Size(3200, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: UploadCasesView(api: api))),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Upload Health Check Excel'));
+    await tester.pumpAndSettle(const Duration(seconds: 3));
+
+    // Names the shape, so the reader looks at the endpoint rather than the
+    // spreadsheet.
+    expect(find.textContaining('returned no rows'), findsOneWidget);
+    expect(find.textContaining('ok, data2'), findsOneWidget);
   });
 }

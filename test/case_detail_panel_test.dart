@@ -30,6 +30,7 @@ Future<List<CaseItem>> _pumpPanel(
   CaseItem? record,
   CaseDetailTab tab = CaseDetailTab.basicInfo,
   CaseApi? api,
+  VoidCallback? onClose,
 }) async {
   tester.view.physicalSize = const Size(700, 1400);
   tester.view.devicePixelRatio = 1.0;
@@ -45,7 +46,7 @@ Future<List<CaseItem>> _pumpPanel(
           initialTab: tab,
           currentUser: 'ninad.thakur',
           onChanged: changes.add,
-          onClose: () {},
+          onClose: onClose ?? () {},
           api: api ?? _okApi(),
         ),
       ),
@@ -91,7 +92,7 @@ void main() {
     expect(find.text('ASSIGNMENT'), findsOneWidget);
     expect(find.text('CLIENT ID'), findsOneWidget);
     expect(find.text(record.clientId), findsWidgets);
-    expect(find.text(record.facilitySrNo), findsOneWidget);
+    expect(find.text(record.srNo), findsOneWidget);
   });
 
   testWidgets('posting a comment appends it and bumps the tab count', (
@@ -197,6 +198,43 @@ void main() {
     expect(changes.last.activity.last.type, ActivityType.verified);
   });
 
+  testWidgets('a successful verify closes the panel, a failed one does not', (
+    tester,
+  ) async {
+    var closes = 0;
+    await _pumpPanel(
+      tester,
+      record: MockData.cases.first,
+      tab: CaseDetailTab.verify,
+      onClose: () => closes++,
+    );
+
+    await tester.tap(find.text('Verify Record'));
+    await tester.pumpAndSettle();
+    expect(closes, 1, reason: 'the drawer stayed open after verifying');
+
+    final failing = CaseApi(
+      ApiClient(
+        client: MockClient(
+          (_) async => http.Response(jsonEncode({'message': 'Nope.'}), 503),
+        ),
+      ),
+    );
+    var failedCloses = 0;
+    await _pumpPanel(
+      tester,
+      record: MockData.cases.first,
+      tab: CaseDetailTab.verify,
+      api: failing,
+      onClose: () => failedCloses++,
+    );
+
+    await tester.tap(find.text('Verify Record'));
+    await tester.pumpAndSettle();
+    // The reviewer keeps the panel — and their notes — to retry.
+    expect(failedCloses, 0);
+  });
+
   testWidgets('the status dropdown offers only the two assignable statuses', (
     tester,
   ) async {
@@ -247,7 +285,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(sent, hasLength(1), reason: 'verify did not call the API');
-    expect(sent.single.url.path, endsWith('/cases/import'));
+    expect(sent.single.url.path, endsWith('/update-smartpointer'));
 
     final body = jsonDecode(sent.single.body) as Map<String, dynamic>;
     final row = (body['rows'] as List).single as Map<String, dynamic>;

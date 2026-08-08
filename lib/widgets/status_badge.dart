@@ -49,7 +49,6 @@ class StatusBadge extends StatelessWidget {
     // the pending tint and are told apart by their label.
     CaseStatus.pendingWithCpu => (AppColors.warning, AppColors.warningBg),
     CaseStatus.pendingWithHealthChecker => (AppColors.info, AppColors.infoBg),
-    CaseStatus.pending => (AppColors.warning, AppColors.warningBg),
     CaseStatus.inReview => (AppColors.info, AppColors.infoBg),
     CaseStatus.verified => (AppColors.success, AppColors.successBg),
     // Completed is terminal and unremarkable — deliberately the quietest.

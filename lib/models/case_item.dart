@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
-import 'json.dart';
 
 /// Where a record sits in the review workflow.
 ///
@@ -11,7 +10,6 @@ import 'json.dart';
 enum CaseStatus {
   pendingWithCpu('Pending with CPU'),
   pendingWithHealthChecker('Pending with Health Checker'),
-  pending('Pending'),
   inReview('In Review'),
   verified('Verified'),
   completed('Completed'),
@@ -86,12 +84,13 @@ class CaseComment {
   });
 
   /// Up to two initials for the avatar, derived rather than stored.
-  String get initials => author
-      .split(RegExp(r'\s+'))
-      .where((w) => w.isNotEmpty)
-      .take(2)
-      .map((w) => w[0].toUpperCase())
-      .join();
+  String get initials =>
+      author
+          .split(RegExp(r'\s+'))
+          .where((w) => w.isNotEmpty)
+          .take(2)
+          .map((w) => w[0].toUpperCase())
+          .join();
 
   /// A stable colour per author, so the same person keeps the same avatar.
   Color get avatarColor {
@@ -143,7 +142,13 @@ class CaseItem {
   final String exceptionCategory;
   final String reason;
   final String segment;
-  final String facilitySrNo;
+
+  /// The facility the exception sits against, and its serial number within the
+  /// account — two columns on the wire (`facility`, `sr_no`). Carried through
+  /// rather than shown: an update posts them back, and a row that omitted them
+  /// would blank what is stored.
+  final String facility;
+  final String srNo;
   final String maker;
   final String checker;
   final DateTime? lsrmDate;
@@ -183,7 +188,8 @@ class CaseItem {
     this.exceptionCategory = 'Exception',
     this.reason = '',
     this.segment = '',
-    this.facilitySrNo = '',
+    this.facility = '',
+    this.srNo = '',
     this.maker = '',
     this.checker = '',
     this.lsrmDate,
@@ -201,59 +207,6 @@ class CaseItem {
     this.activity = const [],
   });
 
-  /// A stored case, shaped as `/get-smartpointer` and `/cases/upload` return
-  /// their rows.
-  ///
-  /// Read defensively: a missing or differently-typed key yields a default
-  /// rather than throwing, so a backend rename shows as a blank cell instead
-  /// of a crashed dashboard.
-  factory CaseItem.fromJson(Map<String, dynamic> json) {
-    return CaseItem(
-      // The stored row has no id of its own — a case is identified by client
-      // id, account no and line no — so the reference shown in the detail
-      // header falls back to that triple, which is also what makes edits find
-      // their row again.
-      exceptionCode: asText(
-        json['exception_code'],
-        fallback: [
-          asText(json['client_id']),
-          asText(json['account_no']),
-          asText(json['line_no']),
-        ].where((p) => p.isNotEmpty).join('-'),
-      ),
-      clientId: asText(json['client_id']),
-      customerName: asText(json['customer_name']),
-      accountNo: asText(json['account_no']),
-      lineNo: asText(json['line_no']),
-      healthCheckCategory: asText(
-        json['health_check_category'] ?? json['health_check'],
-        fallback: 'FD Exceptions',
-      ),
-      subCategory: asText(json['sub_category']),
-      supportSystem: asText(json['support_system']),
-      coreSystem: asText(json['core_system']),
-      exceptionCategory: asText(
-        json['exception_category'],
-        fallback: 'Exception',
-      ),
-      reason: asText(json['reason']),
-      segment: asText(json['segment']),
-      facilitySrNo: asText(json['facility_sr_no'] ?? json['facility_smo']),
-      maker: asText(json['maker']),
-      checker: asText(json['checker']),
-      lsrmDate: asDate(json['ls_srm_date'] ?? json['lsrm_date']),
-      cpu: asText(json['cpu']),
-      team: asText(json['team'] ?? json['actionable_team']),
-      assignedBy: asText(json['assigned_by']),
-      assignedDate: asDate(json['assigned_date']),
-      priority: asText(json['priority']),
-      status: statusFrom(asText(json['status'])),
-      updatedNote: asText(json['updated_note'] ?? json['last_message']),
-      updatedBy: asText(json['updated_by']),
-      updatedAt: asDate(json['updated_at'] ?? json['imported_at']),
-    );
-  }
-
   /// The case as the import endpoint expects it.
   ///
   /// Keyed on client id / account no / line no, which is how the server finds
@@ -269,7 +222,8 @@ class CaseItem {
     'support_system': supportSystem,
     'core_system': coreSystem,
     'segment': segment,
-    'facility_sr_no': facilitySrNo,
+    'facility': facility,
+    'sr_no': srNo,
     'maker': maker,
     'checker': checker,
     'ls_srm_date': lsrmDate?.toIso8601String() ?? '',
@@ -280,8 +234,11 @@ class CaseItem {
     'status': status.label,
   };
 
-  /// Maps the server's status text onto the enum, defaulting to pending so an
-  /// unrecognised value never drops the row from the grid.
+  /// Maps the server's status text onto the enum.
+  ///
+  /// An unrecognised value lands on the status the server itself gives a case
+  /// nobody has reviewed yet, so the row still reaches the grid — and does so
+  /// in a bucket the STATUS filter actually offers.
   static CaseStatus statusFrom(String raw) {
     final key = _normalise(raw);
     for (final status in CaseStatus.values) {
@@ -292,7 +249,7 @@ class CaseItem {
       'review' || 'underreview' => CaseStatus.inReview,
       'escalated' || 'clarification' => CaseStatus.needClarification,
       'approved' => CaseStatus.verified,
-      _ => CaseStatus.pending,
+      _ => CaseStatus.pendingWithCpu,
     };
   }
 
@@ -307,6 +264,9 @@ class CaseItem {
     CaseStatus? status,
     String? cpu,
     String? team,
+    String? assignedBy,
+    DateTime? assignedDate,
+    String? priority,
     List<CaseComment>? comments,
     List<CaseDocument>? documents,
     List<CaseActivity>? activity,
@@ -329,15 +289,16 @@ class CaseItem {
       exceptionCategory: exceptionCategory,
       reason: reason,
       segment: segment,
-      facilitySrNo: facilitySrNo,
+      facility: facility,
+      srNo: srNo,
       maker: maker,
       checker: checker,
       lsrmDate: lsrmDate,
       cpu: cpu ?? this.cpu,
       team: team ?? this.team,
-      assignedBy: assignedBy,
-      assignedDate: assignedDate,
-      priority: priority,
+      assignedBy: assignedBy ?? this.assignedBy,
+      assignedDate: assignedDate ?? this.assignedDate,
+      priority: priority ?? this.priority,
       lastActivity: lastActivity ?? this.lastActivity,
       updatedNote: updatedNote ?? this.updatedNote,
       updatedBy: updatedBy ?? this.updatedBy,

@@ -163,7 +163,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the select-all box ticks every row on the page', (tester) async {
+  testWidgets('the select-all box ticks every filtered row', (tester) async {
     await _pumpTable(tester);
 
     final boxes = find.byType(Checkbox);
@@ -173,8 +173,9 @@ void main() {
     await tester.tap(boxes.first);
     await tester.pumpAndSettle();
 
-    final rowsOnPage = boxes.evaluate().length - 1;
-    expect(find.text('$rowsOnPage selected'), findsOneWidget);
+    // Every record, not just the page: the rows behind the pager are part of
+    // the same filtered set, and leaving them out put ticks out of reach.
+    expect(find.text('${MockData.cases.length} selected'), findsOneWidget);
   });
 
   testWidgets('the footer reports the record total', (tester) async {
@@ -226,13 +227,12 @@ void main() {
     await _pumpTable(tester);
 
     final pending = MockData.cases
-        .where((c) => c.status == CaseStatus.pending)
+        .where((c) => c.status == CaseStatus.pendingWithCpu)
         .length;
     expect(pending, greaterThan(0), reason: 'fixture has no pending records');
 
-    // Customer, CPU, description, team, then status. A status no reviewer can
-    // assign any more is still filterable while records carry it.
-    await _pickFilter(tester, 4, CaseStatus.pending.label);
+    // Customer, CPU, description, team, then status.
+    await _pickFilter(tester, 4, CaseStatus.pendingWithCpu.label);
     expect(_footerFor(pending), findsOneWidget);
   });
 
@@ -247,6 +247,135 @@ void main() {
 
     expect(find.text('No records match the current filters.'), findsOneWidget);
     expect(_footerFor(0), findsOneWidget);
+  });
+
+  testWidgets('the status filter offers only the two workflow statuses', (
+    tester,
+  ) async {
+    await _pumpTable(tester);
+
+    await tester.tap(find.byType(SearchableDropdown<String>).at(4));
+    await tester.pumpAndSettle();
+
+    // "Pending" was a bucket nothing could put a record in and no reviewer
+    // could assign; it has no place in the picker.
+    expect(find.text('Pending'), findsNothing);
+    expect(find.text(CaseStatus.pendingWithCpu.label), findsWidgets);
+    expect(find.text(CaseStatus.pendingWithHealthChecker.label), findsWidgets);
+
+    // Read the options off the widget rather than counting what the overlay
+    // draws: a status the fixture carries is painted on its rows' badges too,
+    // so a text finder cannot tell a picker entry from a badge.
+    final status = tester.widget<SearchableDropdown<String>>(
+      find.byType(SearchableDropdown<String>).at(4),
+    );
+    expect(status.options, [
+      CaseStatus.pendingWithCpu.label,
+      CaseStatus.pendingWithHealthChecker.label,
+    ]);
+  });
+
+  // The grid takes its rows from the server, so a status outside the workflow
+  // can always arrive on one — a record stored before the list was cut to two,
+  // or a value the backend spells its own way. It gets shown on the row, but
+  // it must not widen the picker into offering a third status.
+  testWidgets('a status outside the workflow stays out of the filter', (
+    tester,
+  ) async {
+    final stray = MockData.cases.first.copyWith(status: CaseStatus.completed);
+    await _pumpTable(tester, cases: [stray, ...MockData.cases.skip(1)]);
+
+    final status = tester.widget<SearchableDropdown<String>>(
+      find.byType(SearchableDropdown<String>).at(4),
+    );
+    expect(status.options, isNot(contains(CaseStatus.completed.label)));
+    expect(status.options, hasLength(2));
+  });
+
+  group('row selection', () {
+    /// The footer's "N selected", or 0 when it is not shown at all.
+    int selectedCount(WidgetTester tester) {
+      final f = find.textContaining(' selected');
+      if (f.evaluate().isEmpty) return 0;
+      return int.parse(tester.widget<Text>(f.first).data!.split(' ').first);
+    }
+
+    /// The header checkbox: true all, false none, null partly.
+    bool? headerValue(WidgetTester tester) =>
+        tester.widgetList<Checkbox>(find.byType(Checkbox)).first.value;
+
+    testWidgets('one tick counts one, and reads as a partial selection', (
+      tester,
+    ) async {
+      await _pumpTable(tester);
+
+      // Index 0 is the header's; 1 is the first data row's.
+      await tester.tap(find.byType(Checkbox).at(1));
+      await tester.pumpAndSettle();
+
+      expect(selectedCount(tester), 1);
+      expect(headerValue(tester), isNull, reason: 'partial, not empty');
+    });
+
+    testWidgets('select-all covers every filtered row, not just the page', (
+      tester,
+    ) async {
+      await _pumpTable(tester);
+      final total = MockData.cases.length;
+      expect(total, greaterThan(10), reason: 'need more than one page');
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+
+      // Regression: this used to tick only the ten rows on screen, leaving the
+      // rest behind the pager where unticking could not reach them.
+      expect(selectedCount(tester), total);
+      expect(headerValue(tester), isTrue);
+
+      await tester.tap(find.text('Next'));
+      await tester.pumpAndSettle();
+      expect(headerValue(tester), isTrue, reason: 'page 2 is selected too');
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      expect(selectedCount(tester), 0, reason: 'one untick clears the lot');
+    });
+
+    testWidgets('filtering drops the selections it hides', (tester) async {
+      await _pumpTable(tester);
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      expect(selectedCount(tester), MockData.cases.length);
+
+      final cpu = MockData.cases.first.cpu;
+      final matching = MockData.cases.where((c) => c.cpu == cpu).length;
+      expect(matching, lessThan(MockData.cases.length), reason: 'need a slice');
+      await _pickFilter(tester, 1, cpu);
+
+      // A tick the filter has hidden cannot be cleared, so it is not kept.
+      expect(selectedCount(tester), matching);
+    });
+
+    testWidgets('a reload that drops rows drops their ticks', (tester) async {
+      await _pumpTable(tester);
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      expect(selectedCount(tester), MockData.cases.length);
+
+      final fewer = MockData.cases.take(3).toList();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: CasesTable(cases: fewer, onOpenCase: (_, _) {}),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(selectedCount(tester), 3, reason: 'no ghosts from the old list');
+    });
   });
 
   testWidgets('filtering returns to the first page', (tester) async {

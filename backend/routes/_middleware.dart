@@ -1,14 +1,33 @@
 import 'dart:io';
 
 import 'package:backend/src/cases_repository.dart';
+import 'package:backend/src/dummy_cases.dart';
 import 'package:dart_frog/dart_frog.dart';
 
 /// Opened once for the process rather than per request — SQLite handles are
 /// cheap to reuse and reopening the file on every call would serialise them
 /// behind each other.
-final _repository = CasesRepository(
-  Platform.environment['CASES_DB'] ?? 'cases.db',
-);
+final _repository = _openRepository();
+
+CasesRepository _openRepository() {
+  final repository = CasesRepository(
+    Platform.environment['CASES_DB'] ?? 'cases.db',
+  );
+
+  // A fresh database has no cases, so the dashboard opened on its empty state
+  // and nothing past it could be worked on until someone uploaded a file.
+  // Seeding gives a local server the rows UAT would have. It only ever writes
+  // into an empty table, so a deleted sample case does not come back.
+  if (Platform.environment['CASES_SEED'] != '0') {
+    final seeded = repository.seedIfEmpty(dummyCases);
+    if (seeded > 0) {
+      // ignore: avoid_print
+      print('Seeded $seeded sample case(s). Set CASES_SEED=0 to skip.');
+    }
+  }
+
+  return repository;
+}
 
 Handler middleware(Handler handler) {
   return handler

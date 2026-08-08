@@ -143,7 +143,7 @@ void main() {
       );
 
       final body = await client.uploadBytes(
-        '/cases/upload',
+        '/read-excel',
         bytes: Uint8List.fromList([1, 2, 3]),
         filename: 'cases.xlsx',
         fields: {'notify': 'true'},
@@ -187,7 +187,9 @@ void main() {
       final c = cases.single;
       expect(c.exceptionCode, 'EXC-02009');
       expect(c.healthCheckCategory, 'FD Exceptions');
-      expect(c.status, CaseStatus.pending);
+      // A bare legacy "Pending" is no longer a status of its own; it lands on
+      // the bucket the server gives an unreviewed case.
+      expect(c.status, CaseStatus.pendingWithCpu);
       expect(c.updatedAt?.year, 2026);
       expect(c.clientId, '4943581');
       expect(c.comments.single.author, 'Prashant');
@@ -214,14 +216,16 @@ void main() {
     });
 
     test(
-      'an unknown status falls back to pending instead of dropping',
+      'an unknown status falls back to an offered one instead of dropping',
       () async {
         final client = _clientReturning([
           {'exception_code': 'EXC-1', 'status': 'Something New'},
         ]);
 
         final c = (await CaseApi(client).fetchCases()).single;
-        expect(c.status, CaseStatus.pending);
+        // Not a bucket of its own: a row parked on one the STATUS filter never
+        // offers cannot be found again.
+        expect(c.status, CaseStatus.pendingWithCpu);
       },
     );
 

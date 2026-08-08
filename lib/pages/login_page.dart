@@ -26,6 +26,11 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _submit() async {
+    // The sign-in button disables itself while this runs, but the password
+    // field's submit action does not go through it — pressing Enter twice
+    // would otherwise push two dashboards, each fetching the case list on its
+    // own initState.
+    if (_loading) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
     await Future.delayed(const Duration(milliseconds: 700));

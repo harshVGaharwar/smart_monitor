@@ -48,7 +48,8 @@ class CasesFileParser {
   /// Carried through when the file has them, blank when it does not.
   static const _optional = <String, String>{
     'segment': 'segment',
-    'facilitysrno': 'facility_sr_no',
+    'facility': 'facility',
+    'facilitysrno': 'sr_no',
     'lssrmdate': 'ls_srm_date',
   };
 
@@ -81,6 +82,7 @@ class CasesFileParser {
     'unit': 'cpu',
     'facilitysmo': 'facilitysrno',
     'facilityserialno': 'facilitysrno',
+    'srno': 'facilitysrno',
     'lssrmdt': 'lssrmdate',
   };
 

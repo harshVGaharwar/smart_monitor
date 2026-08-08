@@ -46,9 +46,14 @@ class ApiEndpoints {
 
   /// Every stored case, for the dashboard grid.
   static const String smartPointer = '/get-smartpointer';
-  static const String uploadCases = '/cases/upload';
-  static const String importCases = '/cases/import';
+
+  /// Parses an uploaded workbook and hands the rows back — it stores nothing.
+  static const String uploadCases = '/read-excel';
+
+  /// Writes the rows the user approved. The write side of [smartPointer].
+  static const String upddateCase = '/update-smartpointer';
   static String caseById(int id) => '/cases/$id';
+  
   static String caseMessages(int id) => '/cases/$id/messages';
   static String caseDocuments(int id) => '/cases/$id/documents';
   static String verifyCase(int id) => '/cases/$id/verify';

@@ -181,4 +181,35 @@ void main() {
     expect(calls, 2);
     expect(find.text('2 records'), findsOneWidget);
   });
+
+  testWidgets('the dashboard issues one GET to the endpoint on first build', (
+    tester,
+  ) async {
+    final sent = <http.Request>[];
+    final api = CaseApi(
+      ApiClient(
+        baseUrl: 'https://smart.internal/api',
+        client: MockClient((request) async {
+          sent.add(request);
+          return http.Response(
+            jsonEncode({
+              'rows': [_row()],
+            }),
+            200,
+          );
+        }),
+      ),
+    );
+
+    await _pump(tester, api);
+    await tester.pumpAndSettle();
+
+    // What the browser's network tab should show once the page opens.
+    expect(sent, hasLength(1), reason: 'the dashboard made no request');
+    expect(sent.single.method, 'GET');
+    expect(
+      sent.single.url.toString(),
+      'https://smart.internal/api/get-smartpointer',
+    );
+  });
 }

@@ -55,7 +55,7 @@ class CaseExport {
           c.priority,
           c.assignedBy,
           c.segment,
-          c.facilitySrNo,
+          c.srNo,
           c.maker,
           c.checker,
           c.lastActivity?.type.label ?? '',

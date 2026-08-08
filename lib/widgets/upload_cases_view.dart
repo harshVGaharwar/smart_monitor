@@ -226,7 +226,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
 
     // The server reads the workbook; the response model owns the parsing, so
     // this screen only ever sees typed rows.
-    UploadCasesResponse response;
+    UploadResponse response;
     try {
       response = await _api.uploadCasesFile(bytes: bytes, filename: name);
     } on ApiException catch (e) {
@@ -335,7 +335,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
     }
 
     setState(() => _submitting = true);
-    final ImportCasesResponse result;
+    final UpdatedCasesResponse result;
     try {
       result = await _api.importCases(rows);
     } on ApiException catch (e) {

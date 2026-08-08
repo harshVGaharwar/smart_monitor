@@ -73,7 +73,8 @@ void main() {
 
       // The client reads these unconditionally, so the keys have to exist.
       expect(rows.single['segment'], '');
-      expect(rows.single['facility_sr_no'], '');
+      expect(rows.single['facility'], '');
+      expect(rows.single['sr_no'], '');
       expect(rows.single['ls_srm_date'], '');
     });
 

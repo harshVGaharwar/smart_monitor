@@ -139,8 +139,8 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
   /// one a reviewer can actually assign.
   static CaseStatus _assignable(CaseStatus status) =>
       CaseStatus.assignable.contains(status)
-      ? status
-      : CaseStatus.assignable.first;
+          ? status
+          : CaseStatus.assignable.first;
 
   void _apply(CaseItem updated) {
     setState(() => _case = updated);
@@ -177,15 +177,17 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
     }
     if (!mounted || result == null) return;
 
-    final tooBig = result.files
-        .where((f) => f.size > AppConstants.maxDocumentBytes)
-        .map((f) => f.name)
-        .toList();
+    final tooBig =
+        result.files
+            .where((f) => f.size > AppConstants.maxDocumentBytes)
+            .map((f) => f.name)
+            .toList();
 
     setState(() {
-      _error = tooBig.isEmpty
-          ? null
-          : '${tooBig.join(', ')} exceeds the 10 MB limit.';
+      _error =
+          tooBig.isEmpty
+              ? null
+              : '${tooBig.join(', ')} exceeds the 10 MB limit.';
       into.addAll(
         result!.files.where((f) => f.size <= AppConstants.maxDocumentBytes),
       );
@@ -210,12 +212,13 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
     final updated = _case.copyWith(
       status: _verifyStatus,
       documents: documents,
-      comments: comment.isEmpty
-          ? _case.comments
-          : [
-              CaseComment(author: _displayName, text: comment, at: now),
-              ..._case.comments,
-            ],
+      comments:
+          comment.isEmpty
+              ? _case.comments
+              : [
+                CaseComment(author: _displayName, text: comment, at: now),
+                ..._case.comments,
+              ],
       activity: [
         ..._case.activity,
         CaseActivity(
@@ -257,6 +260,10 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
     _apply(updated);
     _verifyCommentCtrl.clear();
     _toast('${_case.exceptionCode} set to ${_verifyStatus.label}');
+    // The record is done being reviewed, so the drawer gets out of the way and
+    // hands the grid back. Last, after the row has already been updated: closing
+    // drops the selection, and anything touching state past this point is gone.
+    widget.onClose();
   }
 
   void _confirmReassignment() {
@@ -272,7 +279,9 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
       _case.copyWith(
         cpu: _newCpu,
         team: _newTeam,
-        status: CaseStatus.pending,
+        // Back to square one for whoever picks it up, which is the same status
+        // the server gives a case nobody has reviewed yet.
+        status: CaseStatus.pendingWithCpu,
         documents: [
           ..._case.documents,
           for (final f in _reassignFiles)
@@ -569,7 +578,7 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
           ('Core System', _case.coreSystem),
           ('Exception Category', _case.exceptionCategory),
           ('Segment', _case.segment),
-          ('Facility Sr No', _case.facilitySrNo),
+          ('Facility Sr No', _case.srNo),
           ('Maker', _case.maker),
           ('Checker', _case.checker),
           ('LSRM Date', _date(_case.lsrmDate)),
@@ -643,9 +652,10 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
           style: TextStyle(
             fontSize: 14.5,
             height: 1.35,
-            color: value.trim().isEmpty
-                ? AppColors.textMuted
-                : AppColors.textPrimary,
+            color:
+                value.trim().isEmpty
+                    ? AppColors.textMuted
+                    : AppColors.textPrimary,
           ),
         ),
       ],
@@ -817,14 +827,15 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
     return Column(
       children: [
         Expanded(
-          child: _case.comments.isEmpty
-              ? _emptyState('No comments yet.')
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-                  itemCount: _case.comments.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 18),
-                  itemBuilder: (_, i) => _commentTile(_case.comments[i]),
-                ),
+          child:
+              _case.comments.isEmpty
+                  ? _emptyState('No comments yet.')
+                  : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                    itemCount: _case.comments.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 18),
+                    itemBuilder: (_, i) => _commentTile(_case.comments[i]),
+                  ),
         ),
         const Divider(height: 1, color: AppColors.border),
         Container(
@@ -860,9 +871,8 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
                     icon: Icons.send_rounded,
                     color: AppColors.primaryLight,
                     expand: false,
-                    onTap: _commentCtrl.text.trim().isEmpty
-                        ? null
-                        : _postComment,
+                    onTap:
+                        _commentCtrl.text.trim().isEmpty ? null : _postComment,
                   ),
                 ],
               ),
@@ -1240,10 +1250,7 @@ class _CaseDetailPanelState extends State<CaseDetailPanel>
         border: Border.all(color: AppColors.border, width: 1.2),
       ),
       iconSize: 20,
-      textStyle: const TextStyle(
-        fontSize: 14.5,
-        color: AppColors.textPrimary,
-      ),
+      textStyle: const TextStyle(fontSize: 14.5, color: AppColors.textPrimary),
       hintStyle: const TextStyle(fontSize: 14.5, color: AppColors.textMuted),
       onChanged: onChanged,
     );
@@ -1461,10 +1468,11 @@ class DottedBorderBox extends StatelessWidget {
 class _DashedBorderPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppColors.borderStrong
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.3;
+    final paint =
+        Paint()
+          ..color = AppColors.borderStrong
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.3;
 
     const dash = 6.0;
     const gap = 5.0;

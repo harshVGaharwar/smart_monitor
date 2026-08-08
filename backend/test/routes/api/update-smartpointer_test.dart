@@ -6,7 +6,7 @@ import 'package:dart_frog/dart_frog.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:test/test.dart';
 
-import '../../../../routes/api/cases/import.dart' as route;
+import '../../../routes/api/update-smartpointer.dart' as route;
 
 class _MockRequestContext extends Mock implements RequestContext {}
 
@@ -38,11 +38,11 @@ Future<Response> _post(Object body, {HttpMethod method = HttpMethod.post}) {
   when(() => context.request).thenReturn(
     method == HttpMethod.post
         ? Request.post(
-            Uri.parse('http://localhost/api/cases/import'),
+            Uri.parse('http://localhost/api/update-smartpointer'),
             body: body is String ? body : jsonEncode(body),
             headers: {HttpHeaders.contentTypeHeader: 'application/json'},
           )
-        : Request.get(Uri.parse('http://localhost/api/cases/import')),
+        : Request.get(Uri.parse('http://localhost/api/update-smartpointer')),
   );
   return route.onRequest(context);
 }
@@ -54,8 +54,8 @@ void main() {
   setUp(() => _repo = CasesRepository(':memory:'));
   tearDown(() => _repo.close());
 
-  group('POST /api/cases/import', () {
-    test('writes the rows and reports what it did', () async {
+  group('POST /api/update-smartpointer', () {
+    test('writes the rows and reports how many landed', () async {
       final response = await _post({
         'rows': [_row(lineNo: '1'), _row(lineNo: '2')],
       });
@@ -63,11 +63,78 @@ void main() {
       expect(response.statusCode, HttpStatus.ok);
 
       final body = await _json(response);
-      expect(body['inserted'], 2);
-      expect(body['updated'], 0);
-      expect(body['total'], 2);
+      expect(body['message'], 'Updated Successfully');
+      expect(body['success'], isTrue);
+
+      final data = body['data'] as Map<String, dynamic>;
+      expect(data['total'], 2);
+      expect(data['inserted'], 2);
+      expect(data['updated'], 0);
+      expect(body['count'], 2);
       // The submit is only real if it survives the request.
       expect(_repo.count(), 2);
+    });
+
+    test('echoes the rows it stored, in the model the request used', () async {
+      final response = await _post({
+        'rows': [_row(lineNo: '1')],
+      });
+
+      final data = (await _json(response))['data'] as Map<String, dynamic>;
+      final rows = (data['rows'] as List).cast<Map<String, dynamic>>();
+      expect(rows, hasLength(1));
+      expect(
+        rows.single.keys,
+        containsAllInOrder([
+          'client_id',
+          'customer_name',
+          'account_no',
+          'line_no',
+          'health_check_category',
+          'sub_category',
+          'support_system',
+          'core_system',
+          'exception_category',
+          'reason',
+          'cpu',
+          'team',
+          'segment',
+          'facility',
+          'sr_no',
+          'maker',
+          'checker',
+          'ls_srm_date',
+          'status',
+        ]),
+      );
+      expect(rows.single['client_id'], '4943581');
+      expect(rows.single['cpu'], 'Mumbai');
+      expect(rows.single['team'], 'Cam Renewal Team');
+      // The fixture spells it the old way; the row comes back under the name
+      // the wire actually uses.
+      expect(rows.single['sr_no'], '1');
+      // Stated by nobody, filled in by the store — which is the point of
+      // echoing what was written rather than what was posted.
+      expect(rows.single['status'], 'Pending with CPU');
+    });
+
+    test('a stated status is stored, and a null one leaves it alone', () async {
+      await _post({
+        'rows': [
+          {..._row(), 'status': 'Verified'},
+        ],
+      });
+
+      final response = await _post({
+        'rows': [
+          {..._row(cpu: 'Kolkata'), 'status': null},
+        ],
+      });
+
+      final data = (await _json(response))['data'] as Map<String, dynamic>;
+      final row = (data['rows'] as List).cast<Map<String, dynamic>>().single;
+      expect(row['status'], 'Verified');
+      expect(row['cpu'], 'Kolkata');
     });
 
     test('a bare array is accepted as well as the rows envelope', () async {
@@ -87,8 +154,11 @@ void main() {
       });
 
       final body = await _json(response);
-      expect(body['updated'], 1);
-      expect(body['inserted'], 0);
+      // One row written, and still one case stored rather than two.
+      final data = body['data'] as Map<String, dynamic>;
+      expect(data['total'], 1);
+      expect(data['updated'], 1);
+      expect(data['inserted'], 0);
       expect(_repo.count(), 1);
     });
 

@@ -84,6 +84,25 @@ void main() {
       expect(repo.count(), 2);
     });
 
+    test('reports the rows as stored, not as they were posted', () {
+      repo.importRows([
+        {..._row(lineNo: '1'), 'status': 'Verified'},
+      ]);
+
+      final result = repo.importRows([
+        {..._row(lineNo: '1'), 'facility_sr_no': '7'},
+        _row(lineNo: '2'),
+      ]);
+
+      expect(result.rows, hasLength(2));
+      // The alias resolved and the status kept — neither is visible in what
+      // the caller sent, which is why the rows are read back.
+      expect(result.rows.first['sr_no'], '7');
+      expect(result.rows.first['status'], 'Verified');
+      expect(result.rows.last['status'], 'Pending with CPU');
+      expect(result.rows.last['imported_at'], isNotEmpty);
+    });
+
     test('missing optional columns are stored as empty, not null', () {
       final sparse = _row()..remove('segment');
       repo.importRows([sparse]);
@@ -156,6 +175,35 @@ void main() {
 
       expect(result.total, 0);
       expect(repo.count(), 0);
+    });
+
+    test('the older facility_sr_no spelling still lands in sr_no', () {
+      // A client that has not been rebuilt posts the old key; it has to keep
+      // working rather than silently blanking the column.
+      repo.importRows([_row()]);
+
+      expect(repo.allCases().single['sr_no'], '1');
+    });
+
+    group('seedIfEmpty', () {
+      test('fills an empty table', () {
+        final seeded = repo.seedIfEmpty([_row(lineNo: '1'), _row(lineNo: '2')]);
+
+        expect(seeded, 2);
+        expect(repo.count(), 2);
+      });
+
+      test('leaves a table that already holds cases alone', () {
+        repo.importRows([_row(reason: 'Real import')]);
+
+        final seeded = repo.seedIfEmpty([_row(lineNo: '9')]);
+
+        // Nothing is written once there is real data — a sample case that was
+        // deleted must not come back on the next restart.
+        expect(seeded, 0);
+        expect(repo.count(), 1);
+        expect(repo.allCases().single['reason'], 'Real import');
+      });
     });
   });
 }
