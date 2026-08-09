@@ -5,11 +5,11 @@ import '../data/mock_data.dart';
 /// Every data row becomes one of these — clean or not — so the validation
 /// report can show the whole file. The parsed columns are fixed;
 /// [healthCheckCategory], [exceptionCategory], [reason], [cpu] and
-/// [actionableTeam] are edited in the results table, so they are mutable and
+/// [team] are edited in the results table, so they are mutable and
 /// validity is recomputed on read.
 ///
 /// The `…Raw` fields keep whatever the file actually said. A value the master
-/// data does not recognise leaves [cpu] / [actionableTeam] null, and the table
+/// data does not recognise leaves [cpu] / [team] null, and the table
 /// needs the original text to show the user what it rejected. The two category
 /// fields keep the rejected text in place instead, since they are plain
 /// strings rather than nullable ones.
@@ -34,7 +34,7 @@ class PendingCase {
   /// rather than shown: the import posts them back, and a row that omitted
   /// them would blank what is stored.
   final String facility;
-  final String facilitySrNo;
+  final String srNo;
   final String maker;
   final String checker;
   final String lsSrmDate;
@@ -48,7 +48,7 @@ class PendingCase {
   String exceptionCategory;
   String reason;
   String? cpu;
-  String? actionableTeam;
+  String? team;
 
   PendingCase({
     required this.clientId,
@@ -63,20 +63,20 @@ class PendingCase {
     // Optional columns: carried through and displayed when the file has them.
     this.segment = '',
     this.facility = '',
-    this.facilitySrNo = '',
+    this.srNo = '',
     this.lsSrmDate = '',
     this.id = 0,
     this.healthCheckCategory = '',
     this.exceptionCategory = 'Exception',
     this.reason = '',
     this.cpu,
-    this.actionableTeam,
+    this.team,
     String? cpuRaw,
     String? teamRaw,
     String? exceptionCategoryRaw,
     String? healthCheckCategoryRaw,
   }) : cpuRaw = cpuRaw ?? cpu ?? '',
-       teamRaw = teamRaw ?? actionableTeam ?? '',
+       teamRaw = teamRaw ?? team ?? '',
        exceptionCategoryRaw = exceptionCategoryRaw ?? exceptionCategory,
        healthCheckCategoryRaw = healthCheckCategoryRaw ?? healthCheckCategory;
 
@@ -101,7 +101,7 @@ class PendingCase {
   // results table has to move the row into "Ready to Import" straight away.
 
   bool get cpuValid => cpu != null;
-  bool get teamValid => actionableTeam != null;
+  bool get teamValid => team != null;
   bool get exceptionValid =>
       MockData.exceptionCategories.contains(exceptionCategory);
   bool get healthCheckValid =>
@@ -123,7 +123,7 @@ class PendingCase {
 
   /// What the file said for a field, falling back to the resolved value.
   String get cpuDisplay => cpu ?? cpuRaw;
-  String get teamDisplay => actionableTeam ?? teamRaw;
+  String get teamDisplay => team ?? teamRaw;
 
   /// The row as the import endpoint expects it.
   ///
@@ -141,14 +141,14 @@ class PendingCase {
     'core_system': coreSystem,
     'segment': segment,
     'facility': facility,
-    'sr_no': facilitySrNo,
+    'sr_no': srNo,
     'maker': maker,
     'checker': checker,
     'ls_srm_date': lsSrmDate,
     'exception_category': exceptionCategory,
     'reason': reason,
     'cpu': cpu ?? '',
-    'team': actionableTeam ?? '',
+    'team': team ?? '',
   };
 }
 

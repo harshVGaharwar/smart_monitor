@@ -104,7 +104,7 @@ class UpdateRequestRow {
 
   /// A reviewed upload row, as the bulk submit posts it.
   ///
-  /// [PendingCase.cpu] and [PendingCase.actionableTeam] are null until the row
+  /// [PendingCase.cpu] and [PendingCase.team] are null until the row
   /// resolves against the master data; only valid rows are submitted, so the
   /// raw text is not a useful fallback here. No status: an uploaded file never
   /// states one, and sending a blank would risk resetting a case a reviewer
@@ -122,10 +122,10 @@ class UpdateRequestRow {
       exceptionCategory: row.exceptionCategory,
       reason: row.reason,
       cpu: row.cpu ?? '',
-      team: row.actionableTeam ?? '',
+      team: row.team ?? '',
       segment: row.segment,
       facility: row.facility,
-      srNo: row.facilitySrNo,
+      srNo: row.srNo,
       maker: row.maker,
       checker: row.checker,
       lsSrmDate: row.lsSrmDate,

@@ -198,7 +198,7 @@ class CaseRow {
       coreSystem: coreSystem,
       segment: segment ?? '',
       facility: facility ?? '',
-      facilitySrNo: _serial(srNo),
+      srNo: _serial(srNo),
       maker: maker,
       checker: checker,
       lsSrmDate: lsSrmDate ?? '',
@@ -219,7 +219,7 @@ class CaseRow {
       reason: reason,
       cpu: PendingCase.matchOption(cpu, MockData.cpus),
       cpuRaw: cpu,
-      actionableTeam: PendingCase.matchOption(team, MockData.teams),
+      team: PendingCase.matchOption(team, MockData.teams),
       teamRaw: team,
     );
   }

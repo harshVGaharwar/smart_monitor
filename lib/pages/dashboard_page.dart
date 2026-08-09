@@ -20,7 +20,7 @@ class DashboardPage extends StatefulWidget {
 
   /// Stand-in for the backend, supplied by tests. When null the page builds
   /// its own client and closes it on dispose.
-  final CaseApi? api;
+  final Api? api;
 
   const DashboardPage({super.key, required this.user, this.api});
 
@@ -53,10 +53,10 @@ class _DashboardPageState extends State<DashboardPage> {
   /// Why the last fetch failed, shown above the grid with a retry.
   String? _loadError;
 
-  /// Only set when the page built the client itself — an injected [CaseApi]
+  /// Only set when the page built the client itself — an injected [Api]
   /// belongs to the caller and must not be closed here.
   ApiClient? _ownedClient;
-  late final CaseApi _api;
+  late final Api _api;
 
   /// Record shown in the end drawer, and which of its tabs is open.
   CaseItem? _selectedCase;
@@ -70,7 +70,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _api = injected;
     } else {
       _ownedClient = ApiClient();
-      _api = CaseApi(_ownedClient!);
+      _api = Api(_ownedClient!);
     }
     _load();
   }

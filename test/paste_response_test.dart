@@ -1,14 +1,15 @@
-// A scratch harness for a captured `read-excel` response.
+// A scratch harness for a captured response.
 //
 // Paste a payload into [_response], run, and read what the app made of it:
 //
-//     flutter test test/read_excel_response_test.dart
+//     flutter test test/paste_response_test.dart
 //
-// It passes either way — a rejected file is printed rather than thrown, so any
-// response can be dropped in without rewriting an assertion. The endpoint's
-// real assertions live in `case_api_test.dart`.
-import 'dart:typed_data';
-
+// It passes either way — a failure envelope is printed rather than thrown, so
+// any response can be dropped in without rewriting an assertion. The real
+// assertions live in `case_api_test.dart`.
+//
+// This reads the payload the way the dashboard does. `fetchSmartPointer` takes
+// no arguments, so there is no request to invent — only the response matters.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -64,29 +65,22 @@ void main() {
     );
 
     try {
-      final result = await api.uploadCasesFile(
-        bytes: Uint8List(0),
-        filename: 'cases.xlsx',
-      );
-      final outcome = result.toOutcome();
+      final result = await api.fetchSmartPointer();
       // ignore: avoid_print
-      print('''message   ${result.message}
-rows      ${result.rowCount}
-  ready     ${outcome.valid.length}
-  errors    ${outcome.rows.length - outcome.valid.length}
+      print('''
+
+  message   ${result.message}
+  rows      ${result.rowCount}
+  cases     ${result.cases.length}
 ''');
-      for (final row in result.rows) {
+      for (final c in result.cases) {
         // ignore: avoid_print
-        print(
-          '  ${row.id}  ${row.clientId}  ${row.customerName}  '
-          '${row.cpu ?? '(cpu unresolved)'}  '
-          '${row.team ?? '(team unresolved)'}',
-        );
+        print('  ${c.exceptionCode}  ${c.customerName}  ${c.status.label}');
       }
       // ignore: avoid_print
       print('');
     } on ApiException catch (e) {
-      // Printed, not rethrown: a rejected file is worth pasting in too.
+      // Printed, not rethrown: a rejected response is worth pasting in too.
       // ignore: avoid_print
       print('\n  rejected  ${e.message}\n');
     }

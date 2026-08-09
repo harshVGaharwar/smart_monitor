@@ -71,14 +71,14 @@ Map<String, dynamic> _wireRow({
 /// Requests the stub received, newest last.
 late List<http.BaseRequest> _sent;
 
-/// A [CaseApi] over a transport that answers [respond] and records what it was
+/// A [Api] over a transport that answers [respond] and records what it was
 /// asked. [rawBodies] keeps the decoded text of each request, which is how a
 /// multipart upload is inspected.
-CaseApi _api(
+Api _api(
   http.Response Function(http.Request request) respond, {
   List<String>? rawBodies,
 }) {
-  return CaseApi(
+  return Api(
     ApiClient(
       baseUrl: 'https://example.test/api',
       client: MockClient((request) async {
@@ -90,8 +90,8 @@ CaseApi _api(
   );
 }
 
-/// A [CaseApi] answering every call with [body] as JSON.
-CaseApi _answering(Object? body, {int status = 200}) => _api(
+/// A [Api] answering every call with [body] as JSON.
+Api _answering(Object? body, {int status = 200}) => _api(
   (_) => http.Response(
     jsonEncode(body),
     status,
@@ -181,6 +181,41 @@ void main() {
         ),
       );
     });
+
+    test('a transport failure surfaces as a network error', () async {
+      final api = _api((_) => throw http.ClientException('no route'));
+
+      // Told apart from a server that answered, because only this one is worth
+      // a retry button.
+      await expectLater(
+        api.fetchSmartPointer(),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.isNetworkError, 'isNetworkError', isTrue)
+              .having((e) => e.message, 'message', contains('no route')),
+        ),
+      );
+    });
+
+    test('a gateway page on a 200 is raised, not read as no cases', () async {
+      final api = _api(
+        (_) => http.Response('<html>502 Bad Gateway</html>', 200),
+      );
+
+      // The status line says the request worked; the body never came from this
+      // service. Reading it as zero rows would show an empty grid for an
+      // outage.
+      await expectLater(
+        api.fetchSmartPointer(),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            contains('502 Bad Gateway'),
+          ),
+        ),
+      );
+    });
   });
 
   group('POST ${ApiEndpoints.uploadCases}', () {
@@ -188,7 +223,11 @@ void main() {
       final bodies = <String>[];
       final api = _api(
         (_) => http.Response(
-          jsonEncode(_envelope({'rows': [_wireRow()]})),
+          jsonEncode(
+            _envelope({
+              'rows': [_wireRow()],
+            }),
+          ),
           200,
           headers: {'content-type': 'application/json'},
         ),
@@ -202,8 +241,10 @@ void main() {
 
       expect(_sent.single.method, 'POST');
       expect(_sent.single.url.path, '/api/read-excel');
-      expect(_sent.single.headers['content-type'],
-          contains('multipart/form-data'));
+      expect(
+        _sent.single.headers['content-type'],
+        contains('multipart/form-data'),
+      );
       expect(bodies.single, contains('name="file"'));
       expect(bodies.single, contains('filename="HealthCheck.XLSX"'));
       // Stated alongside the part and lowercased, because the server cannot
@@ -231,7 +272,7 @@ void main() {
       // A null column is a blank cell, not the text "null".
       expect(rows.first.segment, '');
       // 0 means the file stated no serial number.
-      expect(rows.first.facilitySrNo, '');
+      expect(rows.first.srNo, '');
     });
 
     test('a rejected file raises the message the server gave', () async {
@@ -261,24 +302,100 @@ void main() {
       );
     });
 
-    test('a 200 carrying nothing usable says so, and says what arrived',
-        () async {
-      final api = _answering({'ok': true, 'data2': <dynamic>[]});
+    test(
+      'a 200 carrying nothing usable is raised, not read as zero rows',
+      () async {
+        final api = _answering({'ok': true, 'data2': <dynamic>[]});
 
-      await expectLater(
-        api.uploadCasesFile(
-          bytes: Uint8List.fromList([1]),
-          filename: 'cases.xlsx',
+        await expectLater(
+          api.uploadCasesFile(
+            bytes: Uint8List.fromList([1]),
+            filename: 'cases.xlsx',
+          ),
+          throwsA(
+            isA<ApiException>().having(
+              (e) => e.message,
+              'message',
+              contains('returned no rows'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'an empty 200 body is reported rather than read as an empty file',
+      () async {
+        final api = _api((_) => http.Response('', 200));
+
+        // A 200 with nothing behind it is a broken endpoint, not a workbook with
+        // no data rows, and the upload card has to say so.
+        await expectLater(
+          api.uploadCasesFile(
+            bytes: Uint8List.fromList([1]),
+            filename: 'cases.xlsx',
+          ),
+          throwsA(
+            isA<ApiException>().having(
+              (e) => e.message,
+              'message',
+              'The server sent an empty response.',
+            ),
+          ),
+        );
+      },
+    );
+
+    test('a name carrying no extension still states the file type', () async {
+      final bodies = <String>[];
+      final api = _api(
+        (_) => http.Response(
+          jsonEncode(
+            _envelope({
+              'rows': [_wireRow()],
+            }),
+          ),
+          200,
+          headers: {'content-type': 'application/json'},
         ),
-        throwsA(
-          isA<ApiException>()
-              .having((e) => e.message, 'message', contains('returned no rows'))
-              // Naming the shape sends the reader to the endpoint rather than
-              // back to their spreadsheet.
-              .having((e) => e.message, 'message', contains('ok, data2')),
-        ),
+        rawBodies: bodies,
       );
+
+      await api.uploadCasesFile(
+        bytes: Uint8List.fromList([1]),
+        filename: 'workbook',
+      );
+
+      expect(_sent.single.url.path, '/api/read-excel');
+      // Sent empty rather than omitted: the server reads the field either way,
+      // and a missing part is harder to tell from a truncated upload.
+      expect(bodies.single, contains('name="fileType"'));
     });
+
+    test(
+      'an upload that never reaches the server is a network error',
+      () async {
+        final api = _api(
+          (_) => throw http.ClientException('connection closed'),
+        );
+
+        await expectLater(
+          api.uploadCasesFile(
+            bytes: Uint8List.fromList([1]),
+            filename: 'cases.xlsx',
+          ),
+          throwsA(
+            isA<ApiException>()
+                .having((e) => e.isNetworkError, 'isNetworkError', isTrue)
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('connection closed'),
+                ),
+          ),
+        );
+      },
+    );
   });
 
   group('POST ${ApiEndpoints.upddateCase}', () {
@@ -295,13 +412,13 @@ void main() {
       checker: 'ck',
       segment: 'Retail',
       facility: 'Cash Credit',
-      facilitySrNo: '1',
+      srNo: '1',
       lsSrmDate: '2026-07-21',
       healthCheckCategory: 'CAM Expiry Health Check',
       exceptionCategory: 'Exception',
       reason: 'Renewal pending',
       cpu: 'Mumbai',
-      actionableTeam: 'Cam Renewal Team',
+      team: 'Cam Renewal Team',
     );
 
     /// What the backend answers a successful submit with.
@@ -326,7 +443,7 @@ void main() {
     test('sends the approved rows in the request model', () async {
       final api = _answering(stored(2));
 
-      await api.importCases([pending(), pending(lineNo: '6')]);
+      await api.updateCases([pending(), pending(lineNo: '6')]);
 
       expect(_sent.single.method, 'POST');
       expect(_sent.single.url.path, '/api/update-smartpointer');
@@ -344,7 +461,7 @@ void main() {
     test('every column goes out, the serial number as text', () async {
       final api = _answering(stored(1));
 
-      await api.importCases([pending()]);
+      await api.updateCases([pending()]);
 
       final row = _lastRows().single;
       // The whole model, so a row that omitted a column does not blank what is
@@ -362,7 +479,7 @@ void main() {
     test('reads the stored rows and the count back', () async {
       final api = _answering(stored(2));
 
-      final response = await api.importCases([pending(), pending(lineNo: '6')]);
+      final response = await api.updateCases([pending(), pending(lineNo: '6')]);
 
       expect(response.total, 2);
       expect(response.message, 'Updated Successfully');
@@ -376,7 +493,7 @@ void main() {
     test('a server reporting no count is trusted for what was sent', () async {
       final api = _answering(_envelope(null, message: 'Updated Successfully'));
 
-      final response = await api.importCases([pending(), pending(lineNo: '6')]);
+      final response = await api.updateCases([pending(), pending(lineNo: '6')]);
 
       // The rows were written; claiming zero would be worse than trusting
       // what went out.
@@ -388,7 +505,7 @@ void main() {
       final api = _answering(stored(0));
 
       await expectLater(
-        api.importCases([]),
+        api.updateCases([]),
         throwsA(
           isA<ApiException>().having(
             (e) => e.message,
@@ -400,62 +517,30 @@ void main() {
       expect(_sent, isEmpty);
     });
 
-    test('a refused submit is raised rather than reported as imported',
-        () async {
-      final api = _answering(
-        _envelope(
-          null,
-          code: 1,
-          success: false,
-          message: 'The database is unavailable.',
-        ),
-      );
-
-      await expectLater(
-        api.importCases([pending()]),
-        throwsA(
-          isA<ApiException>().having(
-            (e) => e.message,
-            'message',
-            'The database is unavailable.',
+    test(
+      'a refused submit is raised rather than reported as imported',
+      () async {
+        final api = _answering(
+          _envelope(
+            null,
+            code: 1,
+            success: false,
+            message: 'The database is unavailable.',
           ),
-        ),
-      );
-    });
+        );
 
-    test('a single case carries its status and its natural key', () async {
-      final api = _answering(stored(1, status: 'Verified'));
-
-      final response = await api.updateCase(
-        CaseItem(
-          exceptionCode: 'EXC-1',
-          clientId: '4943581',
-          customerName: 'ACME',
-          accountNo: '50200031339584',
-          lineNo: '5',
-          status: CaseStatus.verified,
-          facility: 'Cash Credit',
-          facilitySrNo: '1',
-          lsrmDate: DateTime.utc(2026, 7, 21),
-          cpu: 'Mumbai',
-          team: 'Cam Renewal Team',
-        ),
-      );
-
-      final row = _lastRows().single;
-      expect(row['status'], 'Verified');
-      // Without the triple the server cannot find the row to update.
-      expect(row['client_id'], '4943581');
-      expect(row['account_no'], '50200031339584');
-      expect(row['line_no'], '5');
-      // Carried through though the detail screen never shows them.
-      expect(row['facility'], 'Cash Credit');
-      expect(row['sr_no'], '1');
-      expect(row['ls_srm_date'], '2026-07-21T00:00:00.000Z');
-
-      expect(response.total, 1);
-      expect(response.rows.single.status, 'Verified');
-    });
+        await expectLater(
+          api.updateCases([pending()]),
+          throwsA(
+            isA<ApiException>().having(
+              (e) => e.message,
+              'message',
+              'The database is unavailable.',
+            ),
+          ),
+        );
+      },
+    );
 
     test('a failed save is raised so the panel can keep the record', () async {
       final api = _answering({'message': 'Not allowed.'}, status: 403);
@@ -471,9 +556,110 @@ void main() {
             status: CaseStatus.verified,
           ),
         ),
-        throwsA(isA<ApiException>().having((e) => e.message, 'message',
-            'Not allowed.')),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            'Not allowed.',
+          ),
+        ),
       );
+    });
+
+    /// A stored case, as the Verify tab hands it to the save.
+    CaseItem saved({CaseStatus status = CaseStatus.verified}) => CaseItem(
+      exceptionCode: '4943581-50200031339584-5',
+      clientId: '4943581',
+      customerName: 'ACME',
+      accountNo: '50200031339584',
+      lineNo: '5',
+      healthCheckCategory: 'CAM Expiry Health Check',
+      subCategory: 'Sub',
+      supportSystem: 'LMM',
+      coreSystem: 'FC',
+      exceptionCategory: 'Exception',
+      reason: 'Renewal pending',
+      segment: 'Retail',
+      facility: 'Cash Credit',
+      srNo: '1',
+      maker: 'mk',
+      checker: 'ck',
+      lsrmDate: DateTime.utc(2026, 7, 21),
+      cpu: 'Mumbai',
+      team: 'Cam Renewal Team',
+      status: status,
+    );
+
+    test('a saved case goes out as one row carrying its status', () async {
+      final api = _answering(stored(1, status: 'Verified'));
+
+      await api.updateCase(saved());
+
+      expect(_sent.single.method, 'POST');
+      expect(_sent.single.url.path, '/api/update-smartpointer');
+
+      final row = _lastRows().single;
+      // The whole model, as the bulk submit sends it, so a save does not blank
+      // the columns the panel never shows.
+      expect(row, hasLength(19));
+      // Stated, unlike an upload row: changing it is the point of this save.
+      expect(row['status'], 'Verified');
+      expect(row['segment'], 'Retail');
+      expect(row['facility'], 'Cash Credit');
+    });
+
+    test('the key columns identify the row the server updates', () async {
+      final api = _answering(stored(1, status: 'Verified'));
+
+      await api.updateCase(saved());
+
+      final row = _lastRows().single;
+      // What the server upserts on — get one wrong and the save adds a second
+      // case rather than moving the one on screen.
+      expect(row['client_id'], '4943581');
+      expect(row['account_no'], '50200031339584');
+      expect(row['line_no'], '5');
+      // Dates go out as text, and the serial number too.
+      expect(row['ls_srm_date'], '2026-07-21T00:00:00.000Z');
+      expect(row['sr_no'], '1');
+    });
+
+    test('a save the server does not count still counts the one row', () async {
+      final api = _answering(_envelope(null, message: 'Updated Successfully'));
+
+      final response = await api.updateCase(
+        saved(status: CaseStatus.pendingWithCpu),
+      );
+
+      // The row was written; reporting zero would tell the reviewer their save
+      // was dropped.
+      expect(response.total, 1);
+      expect(response.summary(), '1 case(s) imported');
+      expect(response.rows, isEmpty);
+    });
+  });
+
+  group('Api.fileExtension', () {
+    // What goes out as the `fileType` form field, so the server does not have
+    // to trust a browser's filename.
+    test('is the extension, lowercased', () {
+      expect(Api.fileExtension('HealthCheck.XLSX'), 'xlsx');
+    });
+
+    test('reads the last dot, not the first', () {
+      expect(Api.fileExtension('quarter.2.report.csv'), 'csv');
+    });
+
+    test('is empty when the name carries no extension', () {
+      expect(Api.fileExtension('cases'), '');
+    });
+
+    test('is empty when the name ends on the dot', () {
+      expect(Api.fileExtension('cases.'), '');
+    });
+
+    test('is empty for an empty name', () {
+      expect(Api.fileExtension(''), '');
     });
   });
 }

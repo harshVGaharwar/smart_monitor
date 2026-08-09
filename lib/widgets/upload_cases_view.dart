@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/responsive.dart';
 import '../core/api_client.dart';
-import '../models/import_response.dart';
+import '../models/update_response.dart';
 import '../models/pending_case.dart';
 import '../models/upload_response.dart';
 import '../services/case_api.dart';
@@ -24,7 +24,7 @@ class UploadCasesView extends StatefulWidget {
 
   /// Stand-in for the backend, supplied by tests. When null the view builds
   /// its own client and closes it on dispose.
-  final CaseApi? api;
+  final Api? api;
 
   @override
   State<UploadCasesView> createState() => _UploadCasesViewState();
@@ -97,10 +97,10 @@ class _UploadCasesViewState extends State<UploadCasesView>
 
   /// The file is parsed server-side, so validating a file is a request.
   ///
-  /// Only set when the view built the client itself — an injected [CaseApi]
+  /// Only set when the view built the client itself — an injected [Api]
   /// belongs to the caller and must not be closed here.
   ApiClient? _ownedClient;
-  late final CaseApi _api;
+  late final Api _api;
 
   /// Locates the drop zone so a page-level drop can be tested against it.
   final _dropzoneKey = GlobalKey();
@@ -115,7 +115,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
       _api = injected;
     } else {
       _ownedClient = ApiClient();
-      _api = CaseApi(_ownedClient!);
+      _api = Api(_ownedClient!);
     }
     _progress = AnimationController(
       vsync: this,
@@ -337,7 +337,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
     setState(() => _submitting = true);
     final UpdatedCasesResponse result;
     try {
-      result = await _api.importCases(rows);
+      result = await _api.updateCases(rows);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);

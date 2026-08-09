@@ -67,11 +67,10 @@ const _dashboardResponse = '''
 }
 ''';
 
-CaseApi _api([String body = _dashboardResponse]) => CaseApi(
-  ApiClient(client: MockClient((_) async => http.Response(body, 200))),
-);
+Api _api([String body = _dashboardResponse]) =>
+    Api(ApiClient(client: MockClient((_) async => http.Response(body, 200))));
 
-Future<void> _pump(WidgetTester tester, CaseApi api) async {
+Future<void> _pump(WidgetTester tester, Api api) async {
   tester.view.physicalSize = const Size(1700, 1200);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);

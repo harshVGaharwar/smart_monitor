@@ -37,7 +37,7 @@ class CaseDetailPanel extends StatefulWidget {
 
   /// Used to write a verified record back. Supplied by the dashboard, which
   /// already owns a client; tests pass a stand-in.
-  final CaseApi api;
+  final Api api;
 
   const CaseDetailPanel({
     super.key,

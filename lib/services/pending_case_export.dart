@@ -55,7 +55,7 @@ class PendingCaseExport {
           r.supportSystem,
           r.coreSystem,
           r.segment,
-          r.facilitySrNo,
+          r.srNo,
           r.maker,
           r.checker,
           r.lsSrmDate,

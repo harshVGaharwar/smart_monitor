@@ -97,11 +97,12 @@ class ApiClient {
     Map<String, String>? fields,
   }) async {
     final uri = _uri(path);
-    final request = http.MultipartRequest('POST', uri)
-      ..headers.addAll(_headers(json: false))
-      ..files.add(
-        http.MultipartFile.fromBytes(field, bytes, filename: filename),
-      );
+    final request =
+        http.MultipartRequest('POST', uri)
+          ..headers.addAll(_headers(json: false))
+          ..files.add(
+            http.MultipartFile.fromBytes(field, bytes, filename: filename),
+          );
     if (fields != null) request.fields.addAll(fields);
 
     final started = DateTime.now();

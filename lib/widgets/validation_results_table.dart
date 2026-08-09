@@ -120,7 +120,7 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
     _Col(label: 'SUPPORT SYSTEM', width: 160, value: (r) => r.supportSystem),
     _Col(label: 'CORE SYSTEM', width: 160, value: (r) => r.coreSystem),
     _Col(label: 'SEGMENT', width: 140, value: (r) => r.segment),
-    _Col(label: 'FACILITY SR. NO', width: 150, value: (r) => r.facilitySrNo),
+    _Col(label: 'FACILITY SR. NO', width: 150, value: (r) => r.srNo),
     _Col(label: 'MAKER', width: 130, value: (r) => r.maker),
     _Col(label: 'CHECKER', width: 120, value: (r) => r.checker),
     _Col(label: 'LS SRM DATE', width: 140, value: (r) => r.lsSrmDate),
@@ -261,15 +261,16 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
                 ],
               ),
               body: _body(pageRows),
-              overlay: pageRows.isEmpty
-                  ? const Text(
-                      'No rows match the current filters.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textMuted,
-                      ),
-                    )
-                  : null,
+              overlay:
+                  pageRows.isEmpty
+                      ? const Text(
+                        'No rows match the current filters.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textMuted,
+                        ),
+                      )
+                      : null,
             ),
           ),
           const Divider(height: 1, color: AppColors.border),
@@ -297,18 +298,19 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
             width: _checkboxWidth,
             child: _checkbox(
               value: allSelected,
-              onChanged: pageRows.isEmpty
-                  ? null
-                  : (v) {
-                      setState(() {
-                        if (v ?? false) {
-                          _selected.addAll(pageRows);
-                        } else {
-                          _selected.removeAll(pageRows);
-                        }
-                      });
-                      widget.onSelectionChanged?.call({..._selected});
-                    },
+              onChanged:
+                  pageRows.isEmpty
+                      ? null
+                      : (v) {
+                        setState(() {
+                          if (v ?? false) {
+                            _selected.addAll(pageRows);
+                          } else {
+                            _selected.removeAll(pageRows);
+                          }
+                        });
+                        widget.onSelectionChanged?.call({..._selected});
+                      },
             ),
           ),
           for (final col in _cols)
@@ -325,9 +327,10 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0.4,
-                      color: _filters.containsKey(col.label)
-                          ? AppColors.textPrimary
-                          : AppColors.textSecondary,
+                      color:
+                          _filters.containsKey(col.label)
+                              ? AppColors.textPrimary
+                              : AppColors.textSecondary,
                     ),
                   ),
                 ),
@@ -371,9 +374,10 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
               width: col.width,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: col.filterable
-                    ? _filterDropdown(col)
-                    : const SizedBox.shrink(),
+                child:
+                    col.filterable
+                        ? _filterDropdown(col)
+                        : const SizedBox.shrink(),
               ),
             ),
         ],
@@ -403,14 +407,15 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
         fontWeight: FontWeight.w500,
         color: AppColors.textPrimary,
       ),
-      onChanged: (v) => setState(() {
-        if (v == null) {
-          _filters.remove(col.label);
-        } else {
-          _filters[col.label] = v;
-        }
-        _page = 0;
-      }),
+      onChanged:
+          (v) => setState(() {
+            if (v == null) {
+              _filters.remove(col.label);
+            } else {
+              _filters[col.label] = v;
+            }
+            _page = 0;
+          }),
     );
   }
 
@@ -430,8 +435,8 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
     return ListView.separated(
       controller: _vScroll,
       itemCount: rows.length,
-      separatorBuilder: (_, _) =>
-          const Divider(height: 1, color: AppColors.border),
+      separatorBuilder:
+          (_, _) => const Divider(height: 1, color: AppColors.border),
       itemBuilder: (_, i) => _dataRow(rows[i]),
     );
   }
@@ -441,9 +446,10 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
     return Container(
       // A faint wash marks the whole row so an error is findable without
       // scrolling sideways to the offending column.
-      color: flagged
-          ? AppColors.dangerBg.withValues(alpha: 0.45)
-          : AppColors.surface,
+      color:
+          flagged
+              ? AppColors.dangerBg.withValues(alpha: 0.45)
+              : AppColors.surface,
       padding: const EdgeInsets.symmetric(horizontal: _rowPadding, vertical: 8),
       child: Row(
         children: [
@@ -508,10 +514,10 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
         return _validated(
           valid: r.teamValid,
           display: r.teamDisplay,
-          value: r.actionableTeam,
+          value: r.team,
           options: MockData.teams,
           onChanged: (v) {
-            r.actionableTeam = v;
+            r.team = v;
             _rowEdited();
           },
         );
@@ -520,9 +526,10 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
         return _validated(
           valid: r.healthCheckValid,
           display: r.healthCheckCategory,
-          value: r.healthCheckCategory.trim().isEmpty
-              ? null
-              : r.healthCheckCategory,
+          value:
+              r.healthCheckCategory.trim().isEmpty
+                  ? null
+                  : r.healthCheckCategory,
           options: MockData.healthCheckCategories,
           onChanged: (v) {
             r.healthCheckCategory = v ?? '';
@@ -534,9 +541,8 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
         return _validated(
           valid: r.exceptionValid,
           display: r.exceptionCategory,
-          value: r.exceptionCategory.trim().isEmpty
-              ? null
-              : r.exceptionCategory,
+          value:
+              r.exceptionCategory.trim().isEmpty ? null : r.exceptionCategory,
           options: _exceptionOptions,
           onChanged: (v) {
             r.exceptionCategory = v ?? '';
@@ -660,18 +666,20 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
         color: valid ? AppColors.surface : AppColors.dangerBg,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: valid
-              ? AppColors.border
-              : AppColors.danger.withValues(alpha: 0.45),
+          color:
+              valid
+                  ? AppColors.border
+                  : AppColors.danger.withValues(alpha: 0.45),
         ),
       ),
-      leading: valid
-          ? null
-          : const Icon(
-              Icons.warning_amber_rounded,
-              size: 14,
-              color: AppColors.danger,
-            ),
+      leading:
+          valid
+              ? null
+              : const Icon(
+                Icons.warning_amber_rounded,
+                size: 14,
+                color: AppColors.danger,
+              ),
       iconSize: 16,
       iconColor: valid ? AppColors.textMuted : AppColors.danger,
       textStyle: TextStyle(
@@ -783,10 +791,11 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
           fontWeight: FontWeight.w600,
           color: AppColors.textPrimary,
         ),
-        onChanged: (v) => setState(() {
-          _pageSize = v ?? 10;
-          _page = 0;
-        }),
+        onChanged:
+            (v) => setState(() {
+              _pageSize = v ?? 10;
+              _page = 0;
+            }),
       ),
     );
   }

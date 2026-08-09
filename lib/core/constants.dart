@@ -52,18 +52,11 @@ class ApiEndpoints {
 
   /// Writes the rows the user approved. The write side of [smartPointer].
   static const String upddateCase = '/update-smartpointer';
-  static String caseById(int id) => '/cases/$id';
-  
-  static String caseMessages(int id) => '/cases/$id/messages';
-  static String caseDocuments(int id) => '/cases/$id/documents';
-  static String verifyCase(int id) => '/cases/$id/verify';
-  static String reassignCase(int id) => '/cases/$id/reassign';
+
 
   // MIS register
   static const String misReports = '/mis-reports';
   static const String misSubmit = '/mis-reports/submit';
 
-  // Reference data for the reassign dialog
-  static const String cpus = '/reference/cpus';
-  static const String teams = '/reference/teams';
+
 }
