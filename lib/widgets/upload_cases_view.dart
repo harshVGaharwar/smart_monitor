@@ -312,7 +312,12 @@ class _UploadCasesViewState extends State<UploadCasesView>
       action: SnackBarAction(
         label: 'Undo',
         textColor: Colors.white,
-        onPressed: () => setState(() => outcome.restore(index, row)),
+        onPressed: () {
+          setState(() => outcome.restore(index, row));
+          // Dismissed by hand: the row is back, and on a platform that never
+          // times the bar out it would otherwise still be offering the undo.
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        },
       ),
     );
   }
@@ -369,6 +374,15 @@ class _UploadCasesViewState extends State<UploadCasesView>
           behavior: SnackBarBehavior.floating,
           backgroundColor: color,
           duration: Duration(seconds: action == null ? 2 : 5),
+          // Without this a bar carrying an action never times out at all:
+          // `SnackBar.persist` defaults to `action != null`, and the timer
+          // that fires after [duration] returns without hiding anything. The
+          // undo is worth five seconds, not the rest of the session.
+          persist: false,
+          // Still offered, so a bar can be dismissed the moment it is read
+          // rather than waited out.
+          showCloseIcon: true,
+          closeIconColor: Colors.white,
           content: Text(message),
           action: action,
         ),
@@ -929,7 +943,7 @@ class _UploadCasesViewState extends State<UploadCasesView>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'VALIDATED FIELDS',
+            'MANDATORY FIELDS',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w800,

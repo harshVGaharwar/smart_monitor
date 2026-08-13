@@ -1,13 +1,13 @@
-import 'case_item.dart';
 import 'pending_case.dart';
 
 /// The body of `POST /update-smartpointer` — the rows to persist.
 ///
-/// One typed contract for the only write endpoint the app has, mirrored by
-/// `backend/lib/src/update_request.dart`. Both writers go through it: the bulk
-/// submit at the end of the upload review, and the Verify tab saving a single
-/// case. The server echoes the rows it stored back in the same shape, so
-/// [UpdateRequestRow] reads as well as writes.
+/// One typed contract for the import, mirrored by
+/// `backend/lib/src/update_request.dart`. The bulk submit at the end of the
+/// upload review is its only writer — signing a record off goes through
+/// `POST /verify`, which names the record rather than restating it. The server
+/// echoes the rows it stored back in the same shape, so [UpdateRequestRow]
+/// reads as well as writes.
 class UpdateRequestModel {
   final List<UpdateRequestRow> rows;
 
@@ -125,10 +125,10 @@ class UpdateRequestRow {
       team: row.team ?? '',
       segment: row.segment,
       facility: row.facility,
-      srNo: row.srNo,
+      srNo: row.srNo == "" ? null : row.srNo,
       maker: row.maker,
       checker: row.checker,
-      lsSrmDate: row.lsSrmDate,
+      lsSrmDate: row.lsSrmDate == "" ? null : row.lsSrmDate,
     );
   }
 
@@ -137,30 +137,6 @@ class UpdateRequestRow {
   /// Carries the status — changing it is the whole point of that save — and
   /// the fields the screen never shows, so posting one case does not blank
   /// what is stored against it.
-  factory UpdateRequestRow.fromCaseItem(CaseItem item) {
-    return UpdateRequestRow(
-      clientId: item.clientId,
-      customerName: item.customerName,
-      accountNo: item.accountNo,
-      lineNo: item.lineNo,
-      healthCheckCategory: item.healthCheckCategory,
-      subCategory: item.subCategory,
-      supportSystem: item.supportSystem,
-      coreSystem: item.coreSystem,
-      exceptionCategory: item.exceptionCategory,
-      reason: item.reason,
-      cpu: item.cpu,
-      team: item.team,
-      segment: item.segment,
-      facility: item.facility,
-      srNo: item.srNo,
-      maker: item.maker,
-      checker: item.checker,
-      lsSrmDate: item.lsrmDate?.toIso8601String() ?? '',
-      status: item.status.label,
-    );
-  }
-
   Map<String, dynamic> toJson() {
     return {
       'client_id': clientId,

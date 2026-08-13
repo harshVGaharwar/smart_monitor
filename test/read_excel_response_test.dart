@@ -13,7 +13,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:smart_monitor/core/api_client.dart';
+import 'package:smart_monitor/data/master_data.dart';
 import 'package:smart_monitor/services/case_api.dart';
+
+import 'master_data_fixture.dart';
 
 // ---------------------------------------------------------------------------
 // PASTE YOUR RESPONSE HERE
@@ -58,6 +61,12 @@ const _response = '''
 ''';
 
 void main() {
+  // Without these the harness reports every CPU and team unresolved and every
+  // row in error, which says nothing about the pasted payload — the app fetches
+  // the lists from `/getMasterData`, and nothing here does that.
+  setUp(seedMasterData);
+  tearDown(MasterData.reset);
+
   test('the pasted response, as the app reads it', () async {
     final api = Api(
       ApiClient(client: MockClient((_) async => http.Response(_response, 200))),

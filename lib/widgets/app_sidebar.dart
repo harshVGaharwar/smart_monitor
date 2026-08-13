@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../models/login_response.dart';
+import '../models/pending_case.dart';
 import '../theme/app_theme.dart';
 import '../widgets/brand_mark.dart';
 
@@ -8,17 +10,48 @@ class NavDestination {
   const NavDestination(this.icon, this.label);
 }
 
+/// Every screen the rail can show. What a given user actually sees is a subset
+/// of this, decided by their menu permissions — see [navItemsFor].
 const kNavItems = <NavDestination>[
   NavDestination(Icons.dashboard_rounded, 'Dashboard'),
   NavDestination(Icons.assessment_rounded, 'MIS'),
   NavDestination(Icons.upload_file_rounded, 'Upload Document'),
 ];
 
+/// The rail items [menu] permits, in catalogue order.
+///
+/// Names are matched forgivingly — `upload document`, `Upload_Document` and
+/// `UPLOAD DOCUMENT` all land on the same item — because the menu name is the
+/// service's text, not this app's label. One that matches nothing is ignored
+/// rather than shown, since there is no screen behind it.
+///
+/// A user the service sent nothing usable for still gets the dashboard: an
+/// empty rail locks someone out of the whole app, which is a worse answer to a
+/// mismatched menu name than a read-only grid.
+List<NavDestination> navItemsFor(List<MenuPermission> menu) {
+  final labels = [for (final item in kNavItems) item.label];
+  final allowed = <String>{};
+  for (final entry in menu) {
+    if (!entry.isEnabled) continue;
+    final label = PendingCase.matchOption(entry.menuName, labels);
+    if (label != null) allowed.add(label);
+  }
+
+  final items = [
+    for (final item in kNavItems)
+      if (allowed.contains(item.label)) item,
+  ];
+  return items.isEmpty ? [kNavItems.first] : items;
+}
+
 /// Fixed dark navigation rail. Collapses to icon-only when [expanded] is false.
 ///
 /// The rail owns the whole chrome: the collapse control sits beside the brand
 /// and the account block sits at the foot, so no separate top bar is needed.
 class AppSidebar extends StatelessWidget {
+  /// The destinations this user may open, from [navItemsFor].
+  final List<NavDestination> items;
+
   final int selectedIndex;
   final ValueChanged<int> onSelect;
   final bool expanded;
@@ -32,6 +65,7 @@ class AppSidebar extends StatelessWidget {
 
   const AppSidebar({
     super.key,
+    required this.items,
     required this.selectedIndex,
     required this.onSelect,
     required this.expanded,
@@ -65,9 +99,9 @@ class AppSidebar extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 children: [
-                  for (var i = 0; i < kNavItems.length; i++)
+                  for (var i = 0; i < items.length; i++)
                     _NavTile(
-                      item: kNavItems[i],
+                      item: items[i],
                       selected: i == selectedIndex,
                       expanded: expanded,
                       onTap: () => onSelect(i),
@@ -142,12 +176,13 @@ class AppSidebar extends StatelessWidget {
   /// Account block. It lives here rather than in a top bar so the rail is the
   /// only chrome on the page.
   Widget _buildFooter() {
-    final initials = displayName
-        .split(' ')
-        .where((w) => w.isNotEmpty)
-        .take(2)
-        .map((w) => w[0].toUpperCase())
-        .join();
+    final initials =
+        displayName
+            .split(' ')
+            .where((w) => w.isNotEmpty)
+            .take(2)
+            .map((w) => w[0].toUpperCase())
+            .join();
 
     final avatar = Container(
       width: 36,
@@ -188,47 +223,48 @@ class AppSidebar extends StatelessWidget {
           top: BorderSide(color: Colors.white.withValues(alpha: 0.10)),
         ),
       ),
-      child: expanded
-          ? Row(
-              children: [
-                avatar,
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        displayName,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
+      child:
+          expanded
+              ? Row(
+                children: [
+                  avatar,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          displayName,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      Text(
-                        'Supervisor',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.55),
-                          fontSize: 12,
+                        Text(
+                          'Supervisor',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.55),
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                signOut,
-              ],
-            )
-          : Column(
-              children: [
-                Tooltip(message: displayName, child: avatar),
-                const SizedBox(height: 8),
-                signOut,
-              ],
-            ),
+                  signOut,
+                ],
+              )
+              : Column(
+                children: [
+                  Tooltip(message: displayName, child: avatar),
+                  const SizedBox(height: 8),
+                  signOut,
+                ],
+              ),
     );
   }
 }
@@ -254,13 +290,15 @@ class _NavTile extends StatelessWidget {
       padding: EdgeInsets.symmetric(horizontal: expanded ? 14 : 0),
       alignment: expanded ? Alignment.centerLeft : Alignment.center,
       decoration: BoxDecoration(
-        color: selected
-            ? Colors.white.withValues(alpha: 0.12)
-            : Colors.transparent,
+        color:
+            selected
+                ? Colors.white.withValues(alpha: 0.12)
+                : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
-        border: selected
-            ? Border.all(color: Colors.white.withValues(alpha: 0.10))
-            : null,
+        border:
+            selected
+                ? Border.all(color: Colors.white.withValues(alpha: 0.10))
+                : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -268,9 +306,8 @@ class _NavTile extends StatelessWidget {
           Icon(
             item.icon,
             size: 21,
-            color: selected
-                ? Colors.white
-                : Colors.white.withValues(alpha: 0.62),
+            color:
+                selected ? Colors.white : Colors.white.withValues(alpha: 0.62),
           ),
           if (expanded) ...[
             const SizedBox(width: 14),
@@ -283,9 +320,10 @@ class _NavTile extends StatelessWidget {
                 softWrap: false,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: selected
-                      ? Colors.white
-                      : Colors.white.withValues(alpha: 0.72),
+                  color:
+                      selected
+                          ? Colors.white
+                          : Colors.white.withValues(alpha: 0.72),
                   fontSize: 14.5,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                 ),

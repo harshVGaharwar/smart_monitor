@@ -9,8 +9,6 @@
 class AppConstants {
   AppConstants._();
 
-  static const String appName = 'SMART';
-
   /// Root of the REST API, without a trailing slash.
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
@@ -20,15 +18,23 @@ class AppConstants {
   /// How long a single request may take before it is abandoned.
   static const Duration requestTimeout = Duration(seconds: 30);
 
-  /// Upload ceilings, enforced client-side before bytes leave the browser.
+  /// Ceiling on a supporting document, enforced client-side before the bytes
+  /// leave the browser.
+  ///
+  /// The case-file upload keeps its own ceiling and its own list of types, in
+  /// `UploadCasesView` — that screen accepts a wider set on a drop than it
+  /// offers in the picker, which is a distinction only it makes.
   static const int maxDocumentBytes = 10 * 1024 * 1024; // 10 MB
-  static const int maxCaseFileBytes = 25 * 1024 * 1024; // 25 MB
-  static const int maxImageBytes = 5 * 1024 * 1024; // 5 MB
 
-  /// Accepted file types per upload surface.
-  static const List<String> caseFileExtensions = ['xlsx', 'csv'];
-  static const List<String> documentExtensions = ['pdf', 'jpg', 'jpeg', 'png'];
-  static const List<String> imageExtensions = ['jpg', 'jpeg', 'png'];
+  /// File types a supporting document may be.
+  static const List<String> documentExtensions = [
+    'pdf',
+    'jpg',
+    'jpeg',
+    'png',
+    'xlsx',
+    'xls',
+  ];
 }
 
 /// Paths appended to [AppConstants.apiBaseUrl].
@@ -39,11 +45,10 @@ class ApiEndpoints {
   ApiEndpoints._();
 
   // Auth
-  static const String login = '/auth/login';
-  static const String logout = '/auth/logout';
-  // Cases
-  static const String cases = '/cases';
+  /// Signs in and hands back the session and this user's menu permissions.
+  static const String login = '/login';
 
+  // Cases
   /// Every stored case, for the dashboard grid.
   static const String smartPointer = '/get-smartpointer';
 
@@ -53,10 +58,27 @@ class ApiEndpoints {
   /// Writes the rows the user approved. The write side of [smartPointer].
   static const String upddateCase = '/update-smartpointer';
 
+  /// Signs one record off. Takes the record's client id and who is verifying
+  /// it — not the case, which the server already holds.
+  static const String verify = '/verify';
 
-  // MIS register
-  static const String misReports = '/mis-reports';
-  static const String misSubmit = '/mis-reports/submit';
+  /// Routes one record to another CPU and team, back to the CPU side.
+  static const String reassign = '/reassign';
 
+  // Comments
+  /// One case's discussion thread, read before it is added to.
+  static const String getComments = '/getComments';
 
+  /// Adds one comment to that thread. The write side of [getComments].
+  static const String addComment = '/addComment';
+
+  // Documents
+  /// The files attached to one case. Read by everyone — whichever side
+  /// attached a file, the other side has to be able to see it.
+  static const String getDocuments = '/getDocuments';
+
+  // Master data
+  /// The reference lists every screen validates and its dropdowns against —
+  /// CPUs, teams, and the three category sets. One call for all of them.
+  static const String masterData = '/getMasterData';
 }

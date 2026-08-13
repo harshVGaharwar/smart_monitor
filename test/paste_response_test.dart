@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:smart_monitor/core/api_client.dart';
+import 'package:smart_monitor/models/smart_pointer_request.dart';
 import 'package:smart_monitor/services/case_api.dart';
 
 // ---------------------------------------------------------------------------
@@ -65,7 +66,9 @@ void main() {
     );
 
     try {
-      final result = await api.fetchSmartPointer();
+      final result = await api.fetchSmartPointer(
+        const SmartPointerRequest(employeeCode: 'OFF807292', role: 'Maker'),
+      );
       // ignore: avoid_print
       print('''
 

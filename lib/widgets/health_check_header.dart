@@ -43,8 +43,20 @@ class StatusCounts {
 /// own column headings, which is both narrower to aim at and honest about
 /// which field it acts on.
 class HealthCheckHeader extends StatelessWidget {
+  /// The heading, which names the side of the handover this reader works —
+  /// see `AppRole.dashboardTitle`. Passed in rather than derived here: this
+  /// widget is given what to draw and knows nothing about roles.
+  final String title;
+
   final StatusCounts counts;
   final int recordCount;
+
+  /// Whether the status breakdown is shown — the "view the summary" right.
+  ///
+  /// Only the counts go: search, refresh, the record total and export stay for
+  /// everyone who reaches this screen, because they are how a reader works
+  /// their own rows rather than how they read across the whole queue.
+  final bool showSummary;
 
   final TextEditingController searchController;
   final ValueChanged<String> onSearchChanged;
@@ -54,11 +66,10 @@ class HealthCheckHeader extends StatelessWidget {
 
   final VoidCallback onExport;
 
-  final bool hasNotifications;
-  final VoidCallback? onNotifications;
 
   const HealthCheckHeader({
     super.key,
+    required this.title,
     required this.counts,
     required this.recordCount,
     required this.searchController,
@@ -66,8 +77,7 @@ class HealthCheckHeader extends StatelessWidget {
     required this.lastUpdated,
     required this.onRefresh,
     required this.onExport,
-    this.hasNotifications = false,
-    this.onNotifications,
+    this.showSummary = true,
   });
 
   @override
@@ -91,7 +101,7 @@ class HealthCheckHeader extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          'Health Check Dashboard',
+          title,
           style: TextStyle(
             fontSize: isMobile ? 19 : 24,
             fontWeight: FontWeight.w800,
@@ -104,14 +114,7 @@ class HealthCheckHeader extends StatelessWidget {
       ],
     );
 
-    final trailing = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _searchField(context, isMobile),
-        const SizedBox(width: 8),
-        _notificationBell(),
-      ],
-    );
+    final trailing = _searchField(context, isMobile);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -120,28 +123,20 @@ class HealthCheckHeader extends StatelessWidget {
         isMobile ? 10 : 14,
         14,
       ),
-      child: isMobile
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: titleBlock),
-                    _notificationBell(),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _searchField(context, isMobile),
-              ],
-            )
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(child: titleBlock),
-                trailing,
-              ],
-            ),
+      child:
+          isMobile
+              ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  titleBlock,
+                  const SizedBox(height: 12),
+                  _searchField(context, isMobile),
+                ],
+              )
+              : Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [Expanded(child: titleBlock), trailing],
+              ),
     );
   }
 
@@ -151,13 +146,15 @@ class HealthCheckHeader extends StatelessWidget {
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        _inlineStat(counts[CaseStatus.pendingWithCpu], 'with CPU'),
-        _dot(),
-        _inlineStat(
-          counts[CaseStatus.pendingWithHealthChecker],
-          'with health checker',
-        ),
-        _dot(),
+        if (showSummary) ...[
+          _inlineStat(counts[CaseStatus.pendingWithCpu], 'with CPU'),
+          _dot(),
+          _inlineStat(
+            counts[CaseStatus.pendingWithHealthChecker],
+            'with health checker',
+          ),
+          _dot(),
+        ],
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -235,17 +232,18 @@ class HealthCheckHeader extends StatelessWidget {
             size: 19,
             color: AppColors.textMuted,
           ),
-          suffixIcon: searchController.text.isEmpty
-              ? null
-              : IconButton(
-                  tooltip: 'Clear search',
-                  icon: const Icon(Icons.close_rounded, size: 17),
-                  color: AppColors.textMuted,
-                  onPressed: () {
-                    searchController.clear();
-                    onSearchChanged('');
-                  },
-                ),
+          suffixIcon:
+              searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                    tooltip: 'Clear search',
+                    icon: const Icon(Icons.close_rounded, size: 17),
+                    color: AppColors.textMuted,
+                    onPressed: () {
+                      searchController.clear();
+                      onSearchChanged('');
+                    },
+                  ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(22),
             borderSide: const BorderSide(color: AppColors.border),
@@ -259,35 +257,6 @@ class HealthCheckHeader extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _notificationBell() {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        IconButton(
-          onPressed: onNotifications,
-          tooltip: 'Notifications',
-          icon: const Icon(Icons.notifications_none_rounded),
-          iconSize: 23,
-          color: AppColors.textSecondary,
-        ),
-        if (hasNotifications)
-          Positioned(
-            right: 9,
-            top: 8,
-            child: Container(
-              width: 9,
-              height: 9,
-              decoration: BoxDecoration(
-                color: AppColors.accent,
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.surface, width: 1.5),
-              ),
-            ),
-          ),
-      ],
     );
   }
 
@@ -309,22 +278,23 @@ class HealthCheckHeader extends StatelessWidget {
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Wrap(
-            spacing: 22,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              _count(counts.total, 'Total', AppColors.textPrimary),
-              // Tinted from the badge mapping, so a bucket here and the chip
-              // on its rows never drift to different colours.
-              for (final status in counts.shown)
-                _count(
-                  counts[status],
-                  status.label,
-                  StatusBadge.colorsFor(status).$1,
-                ),
-            ],
-          ),
+          if (showSummary)
+            Wrap(
+              spacing: 22,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _count(counts.total, 'Total', AppColors.textPrimary),
+                // Tinted from the badge mapping, so a bucket here and the chip
+                // on its rows never drift to different colours.
+                for (final status in counts.shown)
+                  _count(
+                    counts[status],
+                    status.label,
+                    StatusBadge.colorsFor(status).$1,
+                  ),
+              ],
+            ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [

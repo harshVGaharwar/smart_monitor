@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:backend/src/cases_repository.dart';
+import 'package:backend/src/comments_repository.dart';
 import 'package:backend/src/dummy_cases.dart';
 import 'package:dart_frog/dart_frog.dart';
 
@@ -9,10 +10,13 @@ import 'package:dart_frog/dart_frog.dart';
 /// behind each other.
 final _repository = _openRepository();
 
+/// The comment threads, in the same file and opened once for the same reason.
+final _comments = CommentsRepository(_databasePath);
+
+String get _databasePath => Platform.environment['CASES_DB'] ?? 'cases.db';
+
 CasesRepository _openRepository() {
-  final repository = CasesRepository(
-    Platform.environment['CASES_DB'] ?? 'cases.db',
-  );
+  final repository = CasesRepository(_databasePath);
 
   // A fresh database has no cases, so the dashboard opened on its empty state
   // and nothing past it could be worked on until someone uploaded a file.
@@ -33,7 +37,8 @@ Handler middleware(Handler handler) {
   return handler
       .use(_requestLog)
       .use(_cors)
-      .use(provider<CasesRepository>((_) => _repository));
+      .use(provider<CasesRepository>((_) => _repository))
+      .use(provider<CommentsRepository>((_) => _comments));
 }
 
 /// One line per request, so "did the app actually call this?" is answerable

@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/responsive.dart';
+import '../data/master_data.dart';
 import '../data/mock_data.dart';
 import '../core/api_client.dart';
 import '../models/case_item.dart';
+import '../models/cases_response.dart';
+import '../models/login_response.dart';
+import '../models/smart_pointer_request.dart';
+import '../models/user_rights.dart';
 import '../services/case_api.dart';
 import '../services/case_export.dart';
 import '../services/file_download.dart';
@@ -16,13 +21,15 @@ import '../widgets/upload_cases_view.dart';
 import 'login_page.dart';
 
 class DashboardPage extends StatefulWidget {
-  final String user;
+  /// The signed-in session: the token every request carries, and the user
+  /// whose menu permissions decide which screens the rail offers.
+  final LoginResponse session;
 
   /// Stand-in for the backend, supplied by tests. When null the page builds
   /// its own client and closes it on dispose.
   final Api? api;
 
-  const DashboardPage({super.key, required this.user, this.api});
+  const DashboardPage({super.key, required this.session, this.api});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -31,6 +38,21 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   int _navIndex = 0;
+
+  /// The rail items this user may open. A subset of [kNavItems], so every
+  /// index into it has to go through here rather than the catalogue.
+  late final List<NavDestination> _navItems;
+
+  /// What this user may do inside the screens their menu gives them.
+  late final UserRights _rights;
+
+  /// Whose queue this page reads. The rows the server answers with are already
+  /// this user's — the page does not filter them again.
+  late final SmartPointerRequest _request;
+
+  /// The case-drawer tabs this user may open. Resolved once and handed to both
+  /// the grid and the drawer, so the row actions and the tab bar agree.
+  late final List<CaseDetailTab> _detailTabs;
 
   /// null = follow the breakpoint default; set once the user hits the toggle.
   bool? _sidebarExpanded;
@@ -53,6 +75,15 @@ class _DashboardPageState extends State<DashboardPage> {
   /// Why the last fetch failed, shown above the grid with a retry.
   String? _loadError;
 
+  /// Why the master lists could not be read, or null when they were.
+  ///
+  /// Separate from [_loadError] because the two are different states: the
+  /// queue can load perfectly while the reference lists do not, and that
+  /// dashboard is usable — the rows are all there, it is the drawer's
+  /// dropdowns and the upload screen's validation that are not. Blanking the
+  /// grid over it would hide working data.
+  String? _mastersError;
+
   /// Only set when the page built the client itself — an injected [Api]
   /// belongs to the caller and must not be closed here.
   ApiClient? _ownedClient;
@@ -65,11 +96,17 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
+    _navItems = navItemsFor(widget.session.user.menuList);
+    _rights = UserRights.forRole(widget.session.user.role);
+    _request = SmartPointerRequest.forUser(widget.session.user);
+    _detailTabs = tabsFor(_rights);
     final injected = widget.api;
     if (injected != null) {
       _api = injected;
     } else {
-      _ownedClient = ApiClient();
+      // Only the client this page owns is given the token; an injected one
+      // belongs to the caller, which has its own idea of who is signed in.
+      _ownedClient = ApiClient()..setAuthToken(widget.session.token);
       _api = Api(_ownedClient!);
     }
     _load();
@@ -82,38 +119,80 @@ class _DashboardPageState extends State<DashboardPage> {
     super.dispose();
   }
 
-  /// Pulls the stored cases in. Errors are shown rather than thrown: the rest
-  /// of the page still works, and the banner carries the retry.
+  /// Pulls the stored cases in, and the master lists alongside them.
+  ///
+  /// Errors are shown rather than thrown: the rest of the page still works,
+  /// and the banner carries the retry.
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _loadError = null;
+      _mastersError = null;
     });
 
+    // Both go out together rather than one after the other. Neither answer
+    // depends on the other, and the grid and the dropdowns its drawer opens
+    // are drawn in the same frame.
+    final cases = _readCases();
+    final masters = _readMasters();
+
+    final (loaded, failure) = await cases;
+    final mastersError = await masters;
+    if (!mounted) return;
+
+    setState(() {
+      _loading = false;
+      _mastersError = mastersError;
+      if (failure != null) {
+        _loadError = failure;
+        return;
+      }
+      _cases = loaded!.cases;
+      _loaded = true;
+      _lastUpdated = DateTime.now();
+    });
+  }
+
+  /// The queue, or why it could not be read.
+  ///
+  /// Catches rather than throws so the two reads can be started together
+  /// without either one's failure escaping before the other is awaited.
+  Future<(CasesResponse?, String?)> _readCases() async {
     try {
-      final response = await _api.fetchSmartPointer();
-      if (!mounted) return;
-      setState(() {
-        _cases = response.cases;
-        _loading = false;
-        _loaded = true;
-        _lastUpdated = DateTime.now();
-      });
+      return (await _api.fetchSmartPointer(_request), null);
     } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _loadError = e.message;
-      });
+      return (null, e.message);
     } on Object catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _loadError = 'Could not load cases: $e';
-      });
+      return (null, 'Could not load cases: $e');
     }
   }
 
+  /// Fills [MasterData], and reports why it could not be filled.
+  ///
+  /// A success carrying nothing is reported as a failure: five empty lists
+  /// leave every dropdown blank and flag every uploaded row, which is an
+  /// outage whatever the envelope said about it.
+  Future<String?> _readMasters() async {
+    try {
+      final response = await _api.fetchMasterData();
+      MasterData.apply(response);
+      return response.isEmpty
+          ? 'Master data came back empty. CPU, team and category lists are '
+              'unavailable.'
+          : null;
+    } on ApiException catch (e) {
+      return e.message;
+    } on Object catch (e) {
+      return 'Could not load master data: $e';
+    }
+  }
+
+  /// The rows on screen, after this user's search.
+  ///
+  /// Search is the only filtering left here: which records are the user's was
+  /// settled by the server, which answered `_request` with their queue and
+  /// nothing else. The record total, the summary strip and the CSV all read
+  /// this getter, so the three agree with each other and with the grid.
   List<CaseItem> get _visibleCases {
     return _cases.where((c) {
       if (_search.isNotEmpty) {
@@ -151,20 +230,19 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  /// The name shown in the rail's account block. The service sends a real
+  /// name, so it is used as it arrived; only a response that carried none
+  /// falls back to the sign-in username.
   String get _displayName {
-    final u = widget.user.isEmpty ? 'ninad.thakur' : widget.user;
-    return u
-        .replaceAll('.', ' ')
-        .split(' ')
-        .where((w) => w.isNotEmpty)
-        .map((w) => '${w[0].toUpperCase()}${w.substring(1)}')
-        .join(' ');
+    final name = widget.session.user.name.trim();
+    return name.isEmpty ? 'Signed in' : name;
   }
 
   void _openCase(CaseItem c, CaseDetailTab tab) {
     setState(() {
       _selectedCase = c;
-      _selectedTab = tab;
+      // The drawer clamps too, but a tab this role dropped should not reach it.
+      _selectedTab = _detailTabs.contains(tab) ? tab : CaseDetailTab.basicInfo;
     });
     // The end drawer only exists once a record is selected, and this setState
     // has not rebuilt yet. Calling openEndDrawer() now would silently do
@@ -180,6 +258,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final index = _cases.indexWhere(
       (c) => c.exceptionCode == updated.exceptionCode,
     );
+    final moved = index >= 0 && _cases[index].status != updated.status;
     if (index >= 0) {
       // Copied rather than mutated in place: the fetched list is replaced
       // wholesale on the next load, and setState needs a new list to notice.
@@ -189,6 +268,19 @@ class _DashboardPageState extends State<DashboardPage> {
       _selectedCase = updated;
       _lastUpdated = DateTime.now();
     });
+
+    // Verifying, approving or reassigning hands the record on, and whether it
+    // is still this user's is the server's answer to give, not a guess to make
+    // here — so the drawer closes and the queue is read again. An edit that
+    // does not move the status — a comment, a document — leaves both alone.
+    //
+    // Nothing is said about it here: the panel has already confirmed the
+    // action in a dialog the reader dismissed, and repeating it in a toast as
+    // the row disappears would be telling them twice.
+    if (moved) {
+      Navigator.of(context).maybePop();
+      _load();
+    }
   }
 
   void _logout() {
@@ -204,6 +296,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final expanded = isMobile ? true : (_sidebarExpanded ?? context.isDesktop);
 
     final sidebar = AppSidebar(
+      items: _navItems,
       selectedIndex: _navIndex,
       onSelect: (i) {
         setState(() => _navIndex = i);
@@ -252,7 +345,10 @@ class _DashboardPageState extends State<DashboardPage> {
                     key: ValueKey(selected.exceptionCode),
                     caseItem: selected,
                     initialTab: _selectedTab,
-                    currentUser: widget.user,
+                    tabs: _detailTabs,
+                    currentUser: widget.session.user.name,
+                    userId: widget.session.user.employeeCode,
+                    role: widget.session.user.role,
                     onChanged: _onCaseChanged,
                     onClose: () => Navigator.of(context).maybePop(),
                     api: _api,
@@ -324,10 +420,18 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  /// What this user's dashboard calls itself. The two sides work the same grid
+  /// from opposite ends, and the heading is the only thing on screen that says
+  /// which end the reader is at.
+  String get _dashboardTitle =>
+      AppRole.parse(widget.session.user.role).dashboardTitle;
+
   /// Page heading for the selected rail item — mostly the nav label, except
-  /// where the screen has its own title.
-  String get _pageTitle => switch (kNavItems[_navIndex].label) {
+  /// where the screen has its own title. Dashboard takes the same heading the
+  /// header shows, so the phone's title bar and the desktop heading agree.
+  String get _pageTitle => switch (_navItems[_navIndex].label) {
     'MIS' => 'MIS Data',
+    'Dashboard' => _dashboardTitle,
     final label => label,
   };
 
@@ -338,7 +442,7 @@ class _DashboardPageState extends State<DashboardPage> {
     vertical: 10,
   );
 
-  Widget _sectionBody(bool isMobile) => switch (kNavItems[_navIndex].label) {
+  Widget _sectionBody(bool isMobile) => switch (_navItems[_navIndex].label) {
     'MIS' => Padding(
       padding: _sectionPadding,
       child: MisTable(reports: MockData.misReports),
@@ -352,7 +456,11 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // The header stays for everyone who reaches this screen — search,
+        // refresh and export are how a reader works their own rows. Only the
+        // status breakdown is a supervisor's read across the whole queue.
         HealthCheckHeader(
+          title: _dashboardTitle,
           counts: _counts,
           recordCount: rows.length,
           searchController: _searchCtrl,
@@ -360,11 +468,18 @@ class _DashboardPageState extends State<DashboardPage> {
           lastUpdated: _lastUpdated,
           onRefresh: _refresh,
           onExport: _exportExcel,
-          hasNotifications: true,
+          showSummary: _rights.canViewSummary,
         ),
         SizedBox(height: isMobile ? 12 : 16),
         if (_loadError != null) ...[
           _loadErrorBanner(_loadError!),
+          SizedBox(height: isMobile ? 12 : 16),
+        ],
+        // Shown alongside the rows rather than instead of them: the queue
+        // loading while its reference lists did not is a working dashboard
+        // with unusable dropdowns, and the user should see both facts.
+        if (_mastersError != null) ...[
+          _mastersWarningBanner(_mastersError!),
           SizedBox(height: isMobile ? 12 : 16),
         ],
         // Table fills remaining height; its rows scroll internally while the
@@ -375,9 +490,48 @@ class _DashboardPageState extends State<DashboardPage> {
           child:
               _loading && !_loaded
                   ? const Center(child: CircularProgressIndicator())
-                  : CasesTable(cases: rows, onOpenCase: _openCase),
+                  : CasesTable(
+                    cases: rows,
+                    onOpenCase: _openCase,
+                    tabs: _detailTabs,
+                    canTick: _rights.canTick,
+                  ),
         ),
       ],
+    );
+  }
+
+  /// The master lists failing. A warning rather than an error: nothing on
+  /// screen is wrong, some of it is just missing.
+  Widget _mastersWarningBanner(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.warningBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.warning_amber_rounded,
+            size: 18,
+            color: AppColors.warning,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 13, color: AppColors.warning),
+            ),
+          ),
+          TextButton(
+            onPressed: _loading ? null : _load,
+            child: Text(_loading ? 'Retrying…' : 'Retry'),
+          ),
+        ],
+      ),
     );
   }
 

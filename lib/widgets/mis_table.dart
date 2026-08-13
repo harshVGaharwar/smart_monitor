@@ -71,18 +71,13 @@ class _MisTableState extends State<MisTable> {
     _MisCol(label: 'FREQUENCY', width: 130, value: (r) => r.frequency),
     _MisCol(label: 'CATEGORY', width: 180, value: (r) => r.category),
     _MisCol(label: 'EMPLOYEE NAME', width: 168, value: (r) => r.employeeName),
-    _MisCol(
-      label: _tickCol,
-      width: 140,
-      value: (_) => '',
-      filterable: false,
-    ),
+    _MisCol(label: _tickCol, width: 140, value: (_) => '', filterable: false),
     _MisCol(
       label: _completionCol,
       width: 180,
       value: (r) => _fmt(_completions[r.srNo] ?? r.tickDate),
     ),
-    _MisCol(
+    _MisCol( 
       label: 'LAST PUBLISHED DATE',
       width: 200,
       value: (r) => _fmt(r.lastPublishedDate),
@@ -95,10 +90,10 @@ class _MisTableState extends State<MisTable> {
   static const double _rowPadding = 5;
 
   /// The approval column, whose cells are checkboxes rather than text.
-  static const _tickCol = 'APPROVE DATE';
+  static const _tickCol = 'DATE UPDATE';
 
   /// The column an approval stamps.
-  static const _completionCol = 'COMPLETION DATE';
+  static const _completionCol = 'COMPLETED DATE';
 
   @override
   void initState() {
@@ -256,26 +251,30 @@ class _MisTableState extends State<MisTable> {
         isMobile ? 14 : 18,
         14,
       ),
-      child: isMobile
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                titleBlock,
-                const SizedBox(height: 12),
-                _searchField(context, isMobile),
-                const SizedBox(height: 10),
-                Align(alignment: Alignment.centerRight, child: _submitButton()),
-              ],
-            )
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(child: titleBlock),
-                _searchField(context, isMobile),
-                const SizedBox(width: 12),
-                _submitButton(),
-              ],
-            ),
+      child:
+          isMobile
+              ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  titleBlock,
+                  const SizedBox(height: 12),
+                  _searchField(context, isMobile),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: _submitButton(),
+                  ),
+                ],
+              )
+              : Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: titleBlock),
+                  _searchField(context, isMobile),
+                  const SizedBox(width: 12),
+                  _submitButton(),
+                ],
+              ),
     );
   }
 
@@ -298,17 +297,18 @@ class _MisTableState extends State<MisTable> {
             size: 19,
             color: AppColors.textMuted,
           ),
-          suffixIcon: _search.isEmpty
-              ? null
-              : IconButton(
-                  tooltip: 'Clear search',
-                  icon: const Icon(Icons.close_rounded, size: 17),
-                  color: AppColors.textMuted,
-                  onPressed: () {
-                    _searchCtrl.clear();
-                    setState(() => _search = '');
-                  },
-                ),
+          suffixIcon:
+              _search.isEmpty
+                  ? null
+                  : IconButton(
+                    tooltip: 'Clear search',
+                    icon: const Icon(Icons.close_rounded, size: 17),
+                    color: AppColors.textMuted,
+                    onPressed: () {
+                      _searchCtrl.clear();
+                      setState(() => _search = '');
+                    },
+                  ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(22),
             borderSide: const BorderSide(color: AppColors.border),
@@ -371,9 +371,10 @@ class _MisTableState extends State<MisTable> {
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0.5,
-                      color: _filters.containsKey(col.label)
-                          ? AppColors.textPrimary
-                          : AppColors.textSecondary,
+                      color:
+                          _filters.containsKey(col.label)
+                              ? AppColors.textPrimary
+                              : AppColors.textSecondary,
                     ),
                   ),
                 ),
@@ -397,9 +398,10 @@ class _MisTableState extends State<MisTable> {
               width: col.width,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: col.filterable
-                    ? _filterDropdown(col)
-                    : const SizedBox.shrink(),
+                child:
+                    col.filterable
+                        ? _filterDropdown(col)
+                        : const SizedBox.shrink(),
               ),
             ),
         ],
@@ -429,13 +431,14 @@ class _MisTableState extends State<MisTable> {
         fontWeight: FontWeight.w500,
         color: AppColors.textPrimary,
       ),
-      onChanged: (v) => setState(() {
-        if (v == null) {
-          _filters.remove(col.label);
-        } else {
-          _filters[col.label] = v;
-        }
-      }),
+      onChanged:
+          (v) => setState(() {
+            if (v == null) {
+              _filters.remove(col.label);
+            } else {
+              _filters[col.label] = v;
+            }
+          }),
     );
   }
 
@@ -466,8 +469,8 @@ class _MisTableState extends State<MisTable> {
     return ListView.separated(
       controller: _vScroll,
       itemCount: rows.length,
-      separatorBuilder: (_, _) =>
-          const Divider(height: 1, color: AppColors.border),
+      separatorBuilder:
+          (_, _) => const Divider(height: 1, color: AppColors.border),
       itemBuilder: (_, i) => _dataRow(rows[i], i),
     );
   }
@@ -528,16 +531,17 @@ class _MisTableState extends State<MisTable> {
       tween: Tween(begin: 1, end: 0),
       duration: const Duration(milliseconds: 900),
       curve: Curves.easeOut,
-      builder: (_, t, child) => DecoratedBox(
-        decoration: BoxDecoration(
-          color: AppColors.successBg.withValues(alpha: t),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          child: child,
-        ),
-      ),
+      builder:
+          (_, t, child) => DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppColors.successBg.withValues(alpha: t),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: child,
+            ),
+          ),
       child: text,
     );
   }
@@ -555,9 +559,10 @@ class _MisTableState extends State<MisTable> {
           fontSize: 12.5,
           height: 1.35,
           fontWeight: isName ? FontWeight.w600 : FontWeight.w400,
-          color: text.isEmpty
-              ? AppColors.textMuted
-              : (isName ? AppColors.textPrimary : AppColors.textSecondary),
+          color:
+              text.isEmpty
+                  ? AppColors.textMuted
+                  : (isName ? AppColors.textPrimary : AppColors.textSecondary),
         ),
       ),
     );
@@ -623,9 +628,10 @@ class _MisTableState extends State<MisTable> {
             style: TextStyle(
               fontSize: 13,
               fontWeight: _tickedCount > 0 ? FontWeight.w600 : FontWeight.w400,
-              color: _tickedCount > 0
-                  ? AppColors.primary
-                  : AppColors.textSecondary,
+              color:
+                  _tickedCount > 0
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
             ),
           ),
         ],

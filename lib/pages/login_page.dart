@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
+import '../core/api_client.dart';
+import '../services/case_api.dart';
 import '../theme/app_theme.dart';
 import '../theme/responsive.dart';
 import '../widgets/brand_mark.dart';
+import '../models/login_response.dart';
 import 'dashboard_page.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  /// Stand-in for the backend, supplied by tests. When null the page builds
+  /// its own client and closes it on dispose.
+  final Api? api;
+
+  const LoginPage({super.key, this.api});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -18,10 +25,32 @@ class _LoginPageState extends State<LoginPage> {
   bool _obscure = true;
   bool _loading = false;
 
+  /// Why the last attempt failed, shown above the button. Cleared on the next
+  /// try so a stale message never sits under a fresh attempt.
+  String? _error;
+
+  /// Only set when the page built the client itself — an injected [Api]
+  /// belongs to the caller and must not be closed here.
+  ApiClient? _ownedClient;
+  late final Api _api;
+
+  @override
+  void initState() {
+    super.initState();
+    final injected = widget.api;
+    if (injected != null) {
+      _api = injected;
+    } else {
+      _ownedClient = ApiClient();
+      _api = Api(_ownedClient!);
+    }
+  }
+
   @override
   void dispose() {
     _userCtrl.dispose();
     _passCtrl.dispose();
+    _ownedClient?.close();
     super.dispose();
   }
 
@@ -32,15 +61,35 @@ class _LoginPageState extends State<LoginPage> {
     // own initState.
     if (_loading) return;
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 700));
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final LoginResponse session;
+    try {
+      session = await _api.login(
+        name: _userCtrl.text.trim(),
+        password: _passCtrl.text,
+      );
+    } on ApiException catch (e) {
+      // Shown on the form rather than thrown: the user is one correction away
+      // from getting in, and a dead screen would not tell them which field.
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.message;
+      });
+      return;
+    }
+
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 350),
-        pageBuilder: (_, _, _) => DashboardPage(user: _userCtrl.text.trim()),
-        transitionsBuilder: (_, anim, _, child) =>
-            FadeTransition(opacity: anim, child: child),
+        pageBuilder: (_, _, _) => DashboardPage(session: session),
+        transitionsBuilder:
+            (_, anim, _, child) => FadeTransition(opacity: anim, child: child),
       ),
     );
   }
@@ -53,6 +102,7 @@ class _LoginPageState extends State<LoginPage> {
           final wide = constraints.maxWidth >= 900;
           final form = _LoginForm(
             formKey: _formKey,
+            error: _error,
             userCtrl: _userCtrl,
             passCtrl: _passCtrl,
             obscure: _obscure,
@@ -130,12 +180,13 @@ class _BrandPanel extends StatelessWidget {
                     const SizedBox(width: 14),
                     Text(
                       'SMART',
-                      style: Theme.of(context).textTheme.headlineSmall!
-                          .copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 3,
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.headlineSmall!.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 3,
+                      ),
                     ),
                   ],
                 ),
@@ -240,11 +291,16 @@ class _LoginForm extends StatelessWidget {
   final TextEditingController passCtrl;
   final bool obscure;
   final bool loading;
+
+  /// Why the last attempt failed, or null when there is nothing to report.
+  final String? error;
+
   final VoidCallback onToggleObscure;
   final VoidCallback onSubmit;
 
   const _LoginForm({
     required this.formKey,
+    this.error,
     required this.userCtrl,
     required this.passCtrl,
     required this.obscure,
@@ -277,11 +333,12 @@ class _LoginForm extends StatelessWidget {
                       const SizedBox(width: 12),
                       Text(
                         'SMART',
-                        style: Theme.of(context).textTheme.headlineSmall!
-                            .copyWith(
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 2,
-                            ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.headlineSmall!.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 2,
+                        ),
                       ),
                     ],
                   ),
@@ -309,9 +366,11 @@ class _LoginForm extends StatelessWidget {
                 hintText: 'e.g. ninad.thakur',
                 prefixIcon: Icon(Icons.person_outline, size: 20),
               ),
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Enter your username'
-                  : null,
+              validator:
+                  (v) =>
+                      (v == null || v.trim().isEmpty)
+                          ? 'Enter your username'
+                          : null,
             ),
             const SizedBox(height: 20),
             const _FieldLabel('Password'),
@@ -333,8 +392,9 @@ class _LoginForm extends StatelessWidget {
                   onPressed: onToggleObscure,
                 ),
               ),
-              validator: (v) =>
-                  (v == null || v.isEmpty) ? 'Enter your password' : null,
+              validator:
+                  (v) =>
+                      (v == null || v.isEmpty) ? 'Enter your password' : null,
             ),
             const SizedBox(height: 12),
             Align(
@@ -344,6 +404,10 @@ class _LoginForm extends StatelessWidget {
                 child: const Text('Forgot password?'),
               ),
             ),
+            if (error != null) ...[
+              const SizedBox(height: 4),
+              _ErrorBanner(error!),
+            ],
             const SizedBox(height: 12),
             SizedBox(
               height: 50,
@@ -355,22 +419,23 @@ class _LoginForm extends StatelessWidget {
                   ),
                 ),
                 onPressed: loading ? null : onSubmit,
-                child: loading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.4,
-                          color: Colors.white,
+                child:
+                    loading
+                        ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: Colors.white,
+                          ),
+                        )
+                        : const Text(
+                          'Sign in',
+                          style: TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      )
-                    : const Text(
-                        'Sign in',
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
               ),
             ),
             const SizedBox(height: 28),
@@ -408,6 +473,45 @@ class _FieldLabel extends StatelessWidget {
         fontSize: 13,
         fontWeight: FontWeight.w600,
         color: AppColors.textPrimary,
+      ),
+    );
+  }
+}
+
+/// What the sign-in service said went wrong, shown above the button.
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+  const _ErrorBanner(this.message);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.danger.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 18,
+            color: AppColors.danger,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: AppColors.danger,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -17,6 +17,7 @@ import 'package:http/testing.dart';
 import 'package:smart_monitor/core/api_client.dart';
 import 'package:smart_monitor/models/case_item.dart';
 import 'package:smart_monitor/models/cases_response.dart';
+import 'package:smart_monitor/models/login_response.dart';
 import 'package:smart_monitor/pages/dashboard_page.dart';
 import 'package:smart_monitor/services/case_api.dart';
 import 'package:smart_monitor/theme/app_theme.dart';
@@ -70,6 +71,28 @@ const _dashboardResponse = '''
 Api _api([String body = _dashboardResponse]) =>
     Api(ApiClient(client: MockClient((_) async => http.Response(body, 200))));
 
+/// A signed-in checker, whose menu carries the dashboard these tests read.
+///
+/// The template decides which queue the page asks for, not what it shows —
+/// the stub answers the captured response either way. `dashboard_request_test`
+/// covers the request itself.
+LoginResponse _session() => LoginResponse(
+  token: 'tok',
+  refreshToken: 'ref',
+  user: LoginUser(
+    name: 'Ninad Thakur',
+    role: 'Checker',
+    menuList: const [
+      MenuPermission(
+        id: 1,
+        menuName: 'Dashboard',
+        profileId: 'P2',
+        isActive: 'Y',
+      ),
+    ],
+  ),
+);
+
 Future<void> _pump(WidgetTester tester, Api api) async {
   tester.view.physicalSize = const Size(1700, 1200);
   tester.view.devicePixelRatio = 1.0;
@@ -78,7 +101,7 @@ Future<void> _pump(WidgetTester tester, Api api) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: AppTheme.light,
-      home: DashboardPage(user: 'ninad.thakur', api: api),
+      home: DashboardPage(session: _session(), api: api),
     ),
   );
   await tester.pumpAndSettle();
@@ -145,6 +168,86 @@ void main() {
 
       expect(asText.rows.single.srNo, 0);
       expect(asText.cases.single.srNo, '');
+    });
+
+    test('the columns the grid draws from the thread and the handover', () {
+      // Five keys the row shape gained: who routed the record on and when, how
+      // urgent it is, and what its thread amounts to. Without them the Message
+      // and Last Message columns read empty on every row.
+      final withExtras = _dashboardResponse.replaceFirst(
+        '"status": "Pending with CPU"',
+        '"assigned_by": "OFF807292",'
+        '"assigned_date": "2026-08-10",'
+        '"priority": "High",'
+        '"message_count": 3,'
+        '"last_message": "Documents in order",'
+        '"status": "Pending with CPU"',
+      );
+      final response = CasesResponse.fromJson(
+        jsonDecode(withExtras) as Map<String, dynamic>,
+      );
+
+      final row = response.rows.single;
+      expect(row.assignedBy, 'OFF807292');
+      expect(row.priority, 'High');
+      expect(row.messageCount, 3);
+      expect(row.lastMessage, 'Documents in order');
+
+      final item = response.cases.single;
+      expect(item.assignedBy, 'OFF807292');
+      expect(item.assignedDate, DateTime.parse('2026-08-10'));
+      expect(item.priority, 'High');
+      expect(item.messageCount, 3);
+      // The grid's Last Message column reads the updated note.
+      expect(item.updatedNote, 'Documents in order');
+    });
+
+    test('a server that predates the five answers as if it had none', () {
+      // The captured response above carries none of them, which must read as
+      // "nothing to show" rather than throw.
+      final item = CasesResponse.fromJson(
+        jsonDecode(_dashboardResponse) as Map<String, dynamic>,
+      ).cases.single;
+
+      expect(item.messageCount, 0);
+      expect(item.updatedNote, '');
+      expect(item.assignedBy, '');
+      expect(item.assignedDate, isNull);
+      expect(item.priority, '');
+    });
+
+    test('the service’s stand-in for an unset handover date reads as none', () {
+      // .NET writes DateTime.MinValue where a date was never set — taking it
+      // literally would put the year 1 in front of the user.
+      final item = CasesResponse.fromJson(
+        jsonDecode(
+              _dashboardResponse.replaceFirst(
+                '"status": "Pending with CPU"',
+                '"assigned_date": "0001-01-01","status": "Pending with CPU"',
+              ),
+            )
+            as Map<String, dynamic>,
+      ).cases.single;
+
+      expect(item.assignedDate, isNull);
+    });
+
+    testWidgets('the message count comes off the row, not the thread', (
+      tester,
+    ) async {
+      // A grid row is read without its comments, so counting off that list
+      // would report every case as having none.
+      await _pump(
+        tester,
+        _api(
+          _dashboardResponse.replaceFirst(
+            '"status": "Pending with CPU"',
+            '"message_count": 3,"status": "Pending with CPU"',
+          ),
+        ),
+      );
+
+      expect(find.text('3 Messages'), findsOneWidget);
     });
 
     testWidgets('the row reaches the grid', (tester) async {

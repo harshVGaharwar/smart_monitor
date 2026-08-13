@@ -9,7 +9,10 @@
 /// Accepts a row as the parser produces it or as the repository stores it —
 /// including the older `facility_sr_no` spelling, so a stored database written
 /// before this shape existed still reads.
-Map<String, dynamic> smartRow(Map<String, dynamic> row) {
+Map<String, dynamic> smartRow(
+  Map<String, dynamic> row, {
+  MessageSummary? messages,
+}) {
   final status = _text(row['status']);
   final importedAt = _text(row['imported_at']);
 
@@ -34,12 +37,27 @@ Map<String, dynamic> smartRow(Map<String, dynamic> row) {
     'maker': _nullable(row['maker']),
     'checker': _nullable(row['checker']),
     'ls_srm_date': _date(row['ls_srm_date']),
+    // Who routed the record on and when, blank until somebody has. Written by
+    // a reassignment rather than by the import — see
+    // `CasesRepository.reassignForClient`.
+    'assigned_by': _nullable(row['assigned_by']),
+    'assigned_date': _date(row['assigned_date']),
+    'priority': _nullable(row['priority']),
+    // What the record's thread amounts to, so the grid can show a message
+    // count and the last note without opening every case. Zero and null on a
+    // case nobody has written on, which is what an absent summary means.
+    'message_count': messages?.count ?? 0,
+    'last_message': _nullable(messages?.lastMessage),
     // Only stored cases have these two — an upload response carries neither,
     // exactly as UAT's read-excel does not.
     if (status.isNotEmpty) 'status': status,
     if (importedAt.isNotEmpty) 'imported_at': importedAt,
   };
 }
+
+/// What one case's comment thread amounts to, for the two columns the grid
+/// draws from it.
+typedef MessageSummary = ({int count, String lastMessage, String lastAt});
 
 /// What the service sends where a date was never set.
 const minDate = '0001-01-01';

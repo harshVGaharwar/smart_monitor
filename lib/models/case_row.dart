@@ -1,4 +1,4 @@
-import '../data/mock_data.dart';
+import '../data/master_data.dart';
 import 'case_item.dart';
 import 'pending_case.dart';
 
@@ -44,6 +44,20 @@ class CaseRow {
   /// `0001-01-01` where no date was ever set — .NET's `DateTime.MinValue`.
   final String? lsSrmDate;
 
+  /// Who routed the record on and when, blank until somebody has. Written by
+  /// a reassignment rather than by the import, so an upload response has
+  /// neither.
+  final String assignedBy;
+  final String? assignedDate;
+
+  /// How urgent the row is, when the uploaded file said. Blank when it did not.
+  final String priority;
+
+  /// What the case's thread amounts to, so the grid can draw its Message and
+  /// Last Message columns without opening every record.
+  final int messageCount;
+  final String lastMessage;
+
   /// Where the case sits in the review workflow. Only a stored case has one,
   /// so it is blank on an upload response.
   final String status;
@@ -76,6 +90,11 @@ class CaseRow {
     required this.maker,
     required this.checker,
     this.lsSrmDate,
+    this.assignedBy = '',
+    this.assignedDate,
+    this.priority = '',
+    this.messageCount = 0,
+    this.lastMessage = '',
     this.status = '',
     this.importedAt,
     this.exceptionCode,
@@ -107,6 +126,13 @@ class CaseRow {
       maker: _text(json['maker']),
       checker: _text(json['checker']),
       lsSrmDate: _nullable(json['ls_srm_date'] ?? json['lsrm_date']),
+      assignedBy: _text(json['assigned_by']),
+      assignedDate: _nullable(json['assigned_date']),
+      priority: _text(json['priority']),
+      // A server that predates these answers with neither, and 0 / blank is
+      // the honest reading of that — not an error.
+      messageCount: _number(json['message_count']) ?? 0,
+      lastMessage: _text(json['last_message']),
       status: _text(json['status']),
       importedAt: _nullable(json['imported_at'] ?? json['updated_at']),
       exceptionCode: _nullable(json['exception_code'] ?? json['id']),
@@ -169,6 +195,13 @@ class CaseRow {
       lsrmDate: _date(lsSrmDate),
       cpu: cpu,
       team: team,
+      assignedBy: assignedBy,
+      assignedDate: _date(assignedDate),
+      priority: priority,
+      messageCount: messageCount,
+      // The grid's Last Message column reads the updated note, which on a row
+      // from the queue is exactly the last thing written on its thread.
+      updatedNote: lastMessage,
       status: CaseItem.statusFrom(status),
       updatedAt: _date(importedAt),
     );
@@ -205,21 +238,21 @@ class CaseRow {
       healthCheckCategory:
           PendingCase.matchOption(
             healthCheckCategory,
-            MockData.healthCheckCategories,
+            MasterData.healthCheckCategories,
           ) ??
           healthCheckCategory,
       healthCheckCategoryRaw: healthCheckCategory,
       exceptionCategory:
           PendingCase.matchOption(
             exceptionCategory,
-            MockData.exceptionCategories,
+            MasterData.exceptionCategories,
           ) ??
           exceptionCategory,
       exceptionCategoryRaw: exceptionCategory,
       reason: reason,
-      cpu: PendingCase.matchOption(cpu, MockData.cpus),
+      cpu: PendingCase.matchOption(cpu, MasterData.cpus),
       cpuRaw: cpu,
-      team: PendingCase.matchOption(team, MockData.teams),
+      team: PendingCase.matchOption(team, MasterData.teams),
       teamRaw: team,
     );
   }

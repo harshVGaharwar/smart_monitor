@@ -51,6 +51,7 @@ class CasesFileParser {
     'facility': 'facility',
     'facilitysrno': 'sr_no',
     'lssrmdate': 'ls_srm_date',
+    'priority': 'priority',
   };
 
   /// Human-readable names for the required columns, used in the error message

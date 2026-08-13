@@ -185,6 +185,198 @@ void main() {
       expect(repo.allCases().single['sr_no'], '1');
     });
 
+    group('setStatusForClient', () {
+      test('moves that client\u2019s cases and reports how many', () {
+        repo.importRows([
+          _row(lineNo: '1'),
+          _row(lineNo: '2'),
+          _row(clientId: 'someone-else'),
+        ]);
+
+        final moved = repo.setStatusForClient(
+          clientId: '4943581',
+          status: 'Verified',
+        );
+
+        expect(moved, 2);
+        expect(
+          {
+            for (final row in repo.allCases())
+              row['client_id'] as String: row['status'],
+          },
+          {'4943581': 'Verified', 'someone-else': 'Pending with CPU'},
+        );
+      });
+
+      test('a client nobody stored moves nothing', () {
+        repo.importRows([_row()]);
+
+        // Not an error — the count is the answer, and 0 is a fine one.
+        expect(
+          repo.setStatusForClient(clientId: 'not-here', status: 'Verified'),
+          0,
+        );
+        expect(repo.allCases().single['status'], 'Pending with CPU');
+      });
+
+      test('with a from, only rows in that status move', () {
+        repo.importRows([
+          {..._row(lineNo: '1'), 'status': 'Pending with CPU'},
+          {..._row(lineNo: '2'), 'status': 'Verified'},
+        ]);
+
+        final moved = repo.setStatusForClient(
+          clientId: '4943581',
+          status: 'Pending with Health Checker',
+          from: 'Pending with CPU',
+        );
+
+        // Each side of the handover only moves a record out of its own queue,
+        // so a finished case cannot be dragged back into the maker's grid.
+        expect(moved, 1);
+        expect(
+          {for (final row in repo.allCases()) row['line_no']: row['status']},
+          {'1': 'Pending with Health Checker', '2': 'Verified'},
+        );
+      });
+
+      test('the client id is matched however it was typed', () {
+        repo.importRows([_row(clientId: 'CL22156')]);
+
+        expect(
+          repo.setStatusForClient(clientId: 'cl22156', status: 'Verified'),
+          1,
+        );
+      });
+    });
+
+    group('reassignForClient', () {
+      test('cpu, team and status move together', () {
+        repo.importRows([
+          {..._row(), 'status': 'Pending with Health Checker'},
+        ]);
+
+        final moved = repo.reassignForClient(
+          clientId: '4943581',
+          cpu: 'Chennai',
+          team: 'Disbursement Team',
+          status: 'Pending with CPU',
+          assignedBy: 'OFF807292',
+        );
+
+        expect(moved, 1);
+        final stored = repo.allCases().single;
+        // One act: a case that changed hands but kept its status would sit in
+        // the wrong queue under the right team.
+        expect(stored['cpu'], 'Chennai');
+        expect(stored['team'], 'Disbursement Team');
+        expect(stored['status'], 'Pending with CPU');
+      });
+
+      test('with a from, a record outside that queue is left alone', () {
+        repo.importRows([
+          {..._row(), 'status': 'Verified'},
+        ]);
+
+        final moved = repo.reassignForClient(
+          clientId: '4943581',
+          cpu: 'Chennai',
+          team: 'Disbursement Team',
+          status: 'Pending with CPU',
+          assignedBy: 'OFF807292',
+          from: 'Pending with Health Checker',
+        );
+
+        expect(moved, 0);
+        expect(repo.allCases().single['cpu'], 'Mumbai');
+      });
+    });
+
+    group('casesForOwner', () {
+      // What the dashboard reads: one person's side of one handover. Both
+      // halves have to bite — the status alone is the whole team's work, and
+      // the employee code alone is every record they have ever touched.
+      setUp(() {
+        repo.importRows([
+          {..._row(lineNo: '1'), 'status': 'Pending with Health Checker'},
+          {..._row(lineNo: '2'), 'status': 'Pending with CPU'},
+          {
+            ..._row(lineNo: '3'),
+            'maker': 'someone-else',
+            'status': 'Pending with Health Checker',
+          },
+        ]);
+      });
+
+      List<String> lineNosFor({
+        required String status,
+        required String ownerColumn,
+        required String employeeCode,
+      }) => [
+        for (final row in repo.casesForOwner(
+          status: status,
+          ownerColumn: ownerColumn,
+          employeeCode: employeeCode,
+        ))
+          row['line_no'] as String,
+      ];
+
+      test("is the rows in the status that are also this owner's", () {
+        expect(
+          lineNosFor(
+            status: 'Pending with Health Checker',
+            ownerColumn: 'maker',
+            employeeCode: 'mk',
+          ),
+          ['1'],
+        );
+      });
+
+      test('the same code in the other column is a different person', () {
+        // `ck` checks every one of these and makes none of them.
+        expect(
+          lineNosFor(
+            status: 'Pending with Health Checker',
+            ownerColumn: 'maker',
+            employeeCode: 'ck',
+          ),
+          isEmpty,
+        );
+        expect(
+          lineNosFor(
+            status: 'Pending with CPU',
+            ownerColumn: 'checker',
+            employeeCode: 'ck',
+          ),
+          ['2'],
+        );
+      });
+
+      test('casing decides nothing', () {
+        // The code comes from the sign-in service and the column was written
+        // from a spreadsheet; neither settles how an officer code is typed.
+        expect(
+          lineNosFor(
+            status: 'pending with health checker',
+            ownerColumn: 'maker',
+            employeeCode: 'MK',
+          ),
+          ['1'],
+        );
+      });
+
+      test('a code nobody carries is empty, not everything', () {
+        expect(
+          lineNosFor(
+            status: 'Pending with CPU',
+            ownerColumn: 'checker',
+            employeeCode: 'n2346',
+          ),
+          isEmpty,
+        );
+      });
+    });
+
     group('seedIfEmpty', () {
       test('fills an empty table', () {
         final seeded = repo.seedIfEmpty([_row(lineNo: '1'), _row(lineNo: '2')]);

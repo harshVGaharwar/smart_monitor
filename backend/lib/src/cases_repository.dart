@@ -1,3 +1,4 @@
+import 'package:backend/src/role_queue.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 /// What a call to [CasesRepository.importRows] did.
@@ -25,14 +26,6 @@ class ImportResult {
 
   /// Everything the submit persisted, however it landed.
   int get total => inserted + updated;
-
-  /// The JSON the client reads to report what the submit did.
-  Map<String, dynamic> toJson() => {
-    'rows': rows,
-    'inserted': inserted,
-    'updated': updated,
-    'total': total,
-  };
 }
 
 /// Stores imported health-check cases.
@@ -71,6 +64,12 @@ class CasesRepository {
     'reason',
     'cpu',
     'team',
+    // Written when a record is routed on, not by the import: who handed it over
+    // and when. An upload file carries neither.
+    'assigned_by',
+    'assigned_date',
+    // Carried from the upload when the file states one, blank when it does not.
+    'priority',
   ];
 
   void _migrate() {
@@ -115,7 +114,18 @@ class CasesRepository {
     final placeholders = List.filled(_columns.length, '?').join(', ');
     final assignments = _columns
         .where((c) => !_naturalKey.contains(c))
-        .map((c) => '$c = excluded.$c')
+        .map(
+          // A blank cell must not erase a column the file does not carry. The
+          // rule the status has always had (see below), applied to the columns
+          // an upload has nothing to say about: a re-submitted file would
+          // otherwise wipe who a record was routed to and when, which is the
+          // server's own record of the handover rather than the file's.
+          (c) =>
+              _keptWhenBlank.contains(c)
+                  ? "$c = CASE WHEN excluded.$c = '' THEN cases.$c "
+                      'ELSE excluded.$c END'
+                  : '$c = excluded.$c',
+        )
         .join(', ');
 
     final existing = _db.prepare(
@@ -204,6 +214,106 @@ class CasesRepository {
     ];
   }
 
+  /// One user's queue: the cases in [status] whose [ownerColumn] carries
+  /// [employeeCode]. Ordered as [allCases].
+  ///
+  /// Both halves matter. The status alone is everything waiting on that side of
+  /// the handover, which is the whole team's work rather than this person's.
+  ///
+  /// Compared case-insensitively: the code arrives from the sign-in service and
+  /// the column was written from a spreadsheet, and `OFF807292` and `off807292`
+  /// are the same officer.
+  List<Map<String, dynamic>> casesForOwner({
+    required String status,
+    required String ownerColumn,
+    required String employeeCode,
+  }) {
+    // SQLite cannot bind a column name, so this one is interpolated. It is safe
+    // because it never comes from the request: the only values that reach here
+    // are the two `queueForRole` names, and the assert holds anyone adding a
+    // third to that rule.
+    assert(
+      ownerColumns.contains(ownerColumn),
+      '$ownerColumn is not an owner column',
+    );
+
+    final result = _db.select(
+      'SELECT ${_columns.join(', ')}, status, imported_at FROM cases '
+      'WHERE status = ? COLLATE NOCASE AND $ownerColumn = ? COLLATE NOCASE '
+      'ORDER BY imported_at DESC, client_id, account_no, line_no',
+      [status, employeeCode],
+    );
+    return [
+      for (final row in result) {for (final key in row.keys) key: row[key]},
+    ];
+  }
+
+  /// Moves every case on [clientId] to [status], and reports how many rows
+  /// that was.
+  ///
+  /// The whole client, because a client id is all a verification carries — the
+  /// reviewer acted on a record, and the row it belongs to is the server's to
+  /// find. The count is the answer: a client nobody stored moves nothing and
+  /// says 0, which is not an error, just nothing to do.
+  ///
+  /// [from] narrows it to rows in that status. Each side of the handover only
+  /// moves a record out of its own queue, so an approval cannot drag a
+  /// finished case back into the maker's grid, and the count reports what
+  /// actually moved rather than what was asked for.
+  ///
+  /// Both are matched case-insensitively, as everything read against a client
+  /// id here is.
+  int setStatusForClient({
+    required String clientId,
+    required String status,
+    String? from,
+  }) {
+    _db.execute(
+      'UPDATE cases SET status = ? WHERE client_id = ? COLLATE NOCASE'
+      '${from == null ? '' : ' AND status = ? COLLATE NOCASE'}',
+      [status, clientId, if (from != null) from],
+    );
+    return _db.updatedRows;
+  }
+
+  /// Hands every case on [clientId] to [cpu] and [team], and moves it to
+  /// [status]; how many rows that was.
+  ///
+  /// The three together, because a reassignment is one act: a case that
+  /// changed hands but kept its old status would sit in the wrong queue under
+  /// the right team.
+  ///
+  /// [from] narrows it the same way [setStatusForClient] does — a reviewer
+  /// routes a record out of their own queue and no other.
+  /// [assignedBy] is who routed it. Stamped with the server's clock rather than
+  /// the caller's, for the reason the comment thread is: a client clock minutes
+  /// out would order the handover wrongly for everyone reading it after.
+  int reassignForClient({
+    required String clientId,
+    required String cpu,
+    required String team,
+    required String status,
+    required String assignedBy,
+    String? from,
+  }) {
+    _db.execute(
+      'UPDATE cases SET cpu = ?, team = ?, status = ?, '
+      'assigned_by = ?, assigned_date = ? '
+      'WHERE client_id = ? COLLATE NOCASE'
+      '${from == null ? '' : ' AND status = ? COLLATE NOCASE'}',
+      [
+        cpu,
+        team,
+        status,
+        assignedBy,
+        DateTime.now().toUtc().toIso8601String(),
+        clientId,
+        if (from != null) from,
+      ],
+    );
+    return _db.updatedRows;
+  }
+
   /// How many cases are stored.
   int count() =>
       _db.select('SELECT COUNT(*) AS n FROM cases').first['n'] as int;
@@ -223,6 +333,13 @@ class CasesRepository {
   void close() => _db.close();
 
   static const _naturalKey = {'client_id', 'account_no', 'line_no'};
+
+  /// Columns an import leaves alone when it states nothing for them.
+  ///
+  /// The first two are written by a reassignment, never by a file. The third
+  /// comes from the file, but a later upload that drops the column is silence
+  /// rather than an instruction to clear it.
+  static const _keptWhenBlank = {'assigned_by', 'assigned_date', 'priority'};
 
   /// Older spellings still accepted on input, per column.
   ///

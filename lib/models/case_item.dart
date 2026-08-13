@@ -77,10 +77,15 @@ class CaseComment {
   final String text;
   final DateTime at;
 
+  /// Why the record was routed on, when this note came with a reassignment.
+  /// Shown beside the author; empty on every other comment.
+  final String reason;
+
   const CaseComment({
     required this.author,
     required this.text,
     required this.at,
+    this.reason = '',
   });
 
   /// Up to two initials for the avatar, derived rather than stored.
@@ -165,13 +170,19 @@ class CaseItem {
   /// Latest event, for the grid's Activity column.
   final ActivityEntry? lastActivity;
 
+  /// How many notes the case has collected, for the grid's Message column.
+  ///
+  /// Carried on the row rather than counted off [comments]: a grid row is read
+  /// from the queue endpoint, which does not send the thread — counting there
+  /// would report every case as having none.
+  final int messageCount;
+
   /// Latest note, for the grid's Updated column.
   final String updatedNote;
   final String updatedBy;
   final DateTime? updatedAt;
 
   final List<CaseComment> comments;
-  final List<CaseDocument> documents;
   final List<CaseActivity> activity;
 
   const CaseItem({
@@ -199,11 +210,11 @@ class CaseItem {
     this.assignedDate,
     this.priority = '',
     this.lastActivity,
+    this.messageCount = 0,
     this.updatedNote = '',
     this.updatedBy = '',
     this.updatedAt,
     this.comments = const [],
-    this.documents = const [],
     this.activity = const [],
   });
 
@@ -226,7 +237,7 @@ class CaseItem {
     'sr_no': srNo,
     'maker': maker,
     'checker': checker,
-    'ls_srm_date': lsrmDate?.toIso8601String() ?? '',
+    'ls_srm_date': lsrmDate?.toIso8601String(),
     'exception_category': exceptionCategory,
     'reason': reason,
     'cpu': cpu,
@@ -268,9 +279,9 @@ class CaseItem {
     DateTime? assignedDate,
     String? priority,
     List<CaseComment>? comments,
-    List<CaseDocument>? documents,
     List<CaseActivity>? activity,
     ActivityEntry? lastActivity,
+    int? messageCount,
     String? updatedNote,
     String? updatedBy,
     DateTime? updatedAt,
@@ -300,11 +311,11 @@ class CaseItem {
       assignedDate: assignedDate ?? this.assignedDate,
       priority: priority ?? this.priority,
       lastActivity: lastActivity ?? this.lastActivity,
+      messageCount: messageCount ?? this.messageCount,
       updatedNote: updatedNote ?? this.updatedNote,
       updatedBy: updatedBy ?? this.updatedBy,
       updatedAt: updatedAt ?? this.updatedAt,
       comments: comments ?? this.comments,
-      documents: documents ?? this.documents,
       activity: activity ?? this.activity,
     );
   }

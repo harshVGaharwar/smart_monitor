@@ -15,8 +15,14 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:smart_monitor/core/api_client.dart';
 import 'package:smart_monitor/core/constants.dart';
+import 'package:smart_monitor/models/add_comment_request.dart';
 import 'package:smart_monitor/models/case_item.dart';
+import 'package:smart_monitor/models/comment_response.dart';
+import 'package:smart_monitor/models/get_comments_request.dart';
+import 'package:smart_monitor/models/reassign_request.dart';
+import 'package:smart_monitor/models/verify_request.dart';
 import 'package:smart_monitor/models/pending_case.dart';
+import 'package:smart_monitor/models/smart_pointer_request.dart';
 import 'package:smart_monitor/services/case_api.dart';
 
 /// The envelope every endpoint shares, in the order the service sends it.
@@ -108,6 +114,10 @@ List<Map<String, dynamic>> _lastRows() => [
   for (final row in _lastJson()['rows'] as List) row as Map<String, dynamic>,
 ];
 
+/// Whose queue the read tests ask for. The endpoint has no unfiltered read,
+/// so every call carries one.
+const _queue = SmartPointerRequest(employeeCode: 'OFF807292', role: 'Maker');
+
 void main() {
   setUp(() => _sent = []);
 
@@ -122,10 +132,17 @@ void main() {
         }),
       );
 
-      final response = await api.fetchSmartPointer();
+      final response = await api.fetchSmartPointer(_queue);
 
       expect(_sent.single.method, 'GET');
       expect(_sent.single.url.path, '/api/get-smartpointer');
+      // The whole point of the call: the server reads a queue from these two,
+      // and a request that dropped one would come back as somebody else's
+      // rows or as none.
+      expect(_sent.single.url.queryParameters, {
+        'employeeCode': 'OFF807292',
+        'role': 'Maker',
+      });
       expect(response.rowCount, 2);
 
       final cases = response.cases;
@@ -139,7 +156,7 @@ void main() {
     test('an empty store is a result, not an error', () async {
       final api = _answering(_envelope({'rows': <dynamic>[]}));
 
-      final response = await api.fetchSmartPointer();
+      final response = await api.fetchSmartPointer(_queue);
 
       expect(response.isSuccess, isTrue);
       expect(response.rowCount, 0);
@@ -158,7 +175,7 @@ void main() {
       // A 200 whose envelope says otherwise must not reach the grid as an
       // empty result — the dashboard would show "no cases" for an outage.
       await expectLater(
-        api.fetchSmartPointer(),
+        api.fetchSmartPointer(_queue),
         throwsA(
           isA<ApiException>().having(
             (e) => e.message,
@@ -173,7 +190,7 @@ void main() {
       final api = _answering({'message': 'Session expired.'}, status: 401);
 
       await expectLater(
-        api.fetchSmartPointer(),
+        api.fetchSmartPointer(_queue),
         throwsA(
           isA<ApiException>()
               .having((e) => e.isUnauthorized, 'isUnauthorized', isTrue)
@@ -188,7 +205,7 @@ void main() {
       // Told apart from a server that answered, because only this one is worth
       // a retry button.
       await expectLater(
-        api.fetchSmartPointer(),
+        api.fetchSmartPointer(_queue),
         throwsA(
           isA<ApiException>()
               .having((e) => e.isNetworkError, 'isNetworkError', isTrue)
@@ -206,12 +223,120 @@ void main() {
       // service. Reading it as zero rows would show an empty grid for an
       // outage.
       await expectLater(
-        api.fetchSmartPointer(),
+        api.fetchSmartPointer(_queue),
         throwsA(
           isA<ApiException>().having(
             (e) => e.message,
             'message',
             contains('502 Bad Gateway'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('POST ${ApiEndpoints.login}', () {
+    /// What the sign-in service answers, raw rather than enveloped.
+    Map<String, dynamic> session({
+      String role = 'Supervisor',
+      List<Map<String, dynamic>>? menu,
+    }) => {
+      'token': 'tok-123',
+      'refreshToken': 'ref-456',
+      'user': {
+        'id': 7,
+        'name': 'Ninad Thakur',
+        'employeeCode': 'n2346',
+        'role': role,
+        'profileId': 'P1',
+        'menuList':
+            menu ??
+            [
+              {
+                'id': 1,
+                'menuName': 'Dashboard',
+                'profileId': 'P1',
+                'isActive': 'Y',
+              },
+              {'id': 2, 'menuName': 'MIS', 'profileId': 'P1', 'isActive': 'N'},
+            ],
+      },
+    };
+
+    test('posts the credentials in the service\'s own key casing', () async {
+      final api = _answering(session());
+
+      await api.login(name: 'ninad.thakur', password: 's3cret');
+
+      expect(_sent.single.method, 'POST');
+      expect(_sent.single.url.path, '/api/login');
+
+      final body = _lastJson();
+      // Mirrored from the service, not tidied: `Name` and `LOCATIONCODE` are
+      // capitalised and `password` is not, and the server matches on that.
+      expect(body['Name'], 'ninad.thakur');
+      expect(body['password'], 's3cret');
+      expect(body.containsKey('LOCATIONCODE'), isTrue);
+      // Hardcoded until the employee code can be resolved for real.
+      expect(body['EmployeeCode'], 'n2346');
+      expect(body, hasLength(14));
+    });
+
+    test('reads the session and the menu back', () async {
+      final api = _answering(session());
+
+      final response = await api.login(name: 'ninad.thakur', password: 'x');
+
+      expect(response.token, 'tok-123');
+      expect(response.refreshToken, 'ref-456');
+      expect(response.user.name, 'Ninad Thakur');
+      expect(response.user.role, 'Supervisor');
+      // Closed menus arrive too, flagged rather than omitted.
+      expect(response.user.menuList, hasLength(2));
+      expect(response.user.menuList.first.isEnabled, isTrue);
+      expect(response.user.menuList.last.isEnabled, isFalse);
+    });
+
+    test('a refused sign-in raises the message the server gave', () async {
+      final api = _answering({'message': 'Invalid credentials.'}, status: 401);
+
+      await expectLater(
+        api.login(name: 'ninad.thakur', password: 'wrong'),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.isUnauthorized, 'isUnauthorized', isTrue)
+              .having((e) => e.message, 'message', 'Invalid credentials.'),
+        ),
+      );
+    });
+
+    test('a 200 carrying no token is raised, not signed in', () async {
+      final api = _answering({'token': '', 'user': <String, dynamic>{}});
+
+      // Letting this through would push a dashboard that cannot authenticate a
+      // single call, which reads as an outage rather than a bad password.
+      await expectLater(
+        api.login(name: 'ninad.thakur', password: 'x'),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            contains('Sign-in failed'),
+          ),
+        ),
+      );
+    });
+
+    test('a body that is not an object is raised', () async {
+      final api = _answering(<dynamic>[]);
+
+      await expectLater(
+        api.login(name: 'ninad.thakur', password: 'x'),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            contains('unexpected response'),
           ),
         ),
       );
@@ -541,21 +666,140 @@ void main() {
         );
       },
     );
+  });
 
-    test('a failed save is raised so the panel can keep the record', () async {
+  group('POST ${ApiEndpoints.verify}', () {
+    const verifying = VerifyRequest(
+      clientId: '2287410',
+      userId: 'OFF807292',
+      role: 'Maker',
+      comments: 'Lien released, checked in core.',
+      isVerified: true,
+    );
+
+    test('the record is named, not restated', () async {
+      final api = _answering(_envelope(1, message: 'Updated Successfully'));
+
+      await api.verifyCase(verifying);
+
+      expect(_sent.single.method, 'POST');
+      expect(_sent.single.url.path, '/api/verify');
+      // The whole contract, and nothing of the case. Both flags go every
+      // time: "I am not approving" is a statement, not a missing field.
+      expect(_lastJson(), {
+        'clientId': '2287410',
+        'userId': 'OFF807292',
+        'role': 'Maker',
+        'comments': 'Lien released, checked in core.',
+        // The word, not a JSON boolean — the service spells this one out.
+        'isVerified': 'yes',
+        // Null, not a no: the health check side has no such decision to make,
+        // and inventing one would say it did.
+        'status': null,
+      });
+    });
+
+    test('a reviewer with nothing to add still verifies', () async {
+      final api = _answering(_envelope(1, message: 'Updated Successfully'));
+
+      await api.verifyCase(
+        const VerifyRequest(
+          clientId: '2287410',
+          userId: 'OFF807292',
+          role: 'Maker',
+          isVerified: true,
+        ),
+      );
+
+      expect(_lastJson()['comments'], '');
+      expect(_lastJson()['isVerified'], 'yes');
+      expect(_lastJson()['status'], isNull);
+    });
+
+    test('the CPU side passes a record on with its own decision', () async {
+      final api = _answering(_envelope(1, message: 'Updated Successfully'));
+
+      await api.verifyCase(
+        const VerifyRequest(
+          clientId: '1130488',
+          userId: 'r14878',
+          role: 'Checker',
+          comments: 'Documents in order.',
+          status: ApprovalStatus.approved,
+        ),
+      );
+
+      // The other half of the handover: the checker approves, the maker
+      // verifies, and each side's field is null from the other — a decision
+      // nobody made is not a no.
+      expect(_lastJson()['status'], 'Approved');
+      expect(_lastJson()['isVerified'], isNull);
+    });
+
+    test('a rejection goes out as the word too', () async {
+      final api = _answering(_envelope(0, message: 'Updated Successfully'));
+
+      await api.verifyCase(
+        const VerifyRequest(
+          clientId: '1130488',
+          userId: 'r14878',
+          role: 'Checker',
+          comments: 'Missing the statement.',
+          status: ApprovalStatus.reject,
+        ),
+      );
+
+      expect(_lastJson()['status'], 'Reject');
+    });
+
+    test('a note that decides nothing says so on the wire', () async {
+      final api = _answering(_envelope(0, message: 'Updated Successfully'));
+
+      await api.verifyCase(
+        const VerifyRequest(
+          clientId: '2287410',
+          userId: 'OFF807292',
+          role: 'Maker',
+          comments: 'Waiting on the branch.',
+          isVerified: false,
+        ),
+      );
+
+      // The record keeps its status; only the note is written. Anything the
+      // other end does not read as an affirmative decides nothing.
+      expect(_lastJson()['isVerified'], 'no');
+      expect(_lastJson()['status'], isNull);
+    });
+
+    test('the count comes back off a plain integer', () async {
+      final api = _answering(_envelope(1, message: 'Updated Successfully'));
+
+      final response = await api.verifyCase(verifying);
+
+      expect(response.updatedCount, 1);
+      expect(response.total, 1);
+    });
+
+    test(
+      'a verify the server does not count still counts the one row',
+      () async {
+        final api = _answering(
+          _envelope(null, message: 'Updated Successfully'),
+        );
+
+        final response = await api.verifyCase(verifying);
+
+        // The row was written; reporting zero would tell the reviewer their
+        // verification was dropped.
+        expect(response.total, 1);
+      },
+    );
+
+    test('a refused verify is raised so the panel keeps the record', () async {
       final api = _answering({'message': 'Not allowed.'}, status: 403);
 
       await expectLater(
-        api.updateCase(
-          const CaseItem(
-            exceptionCode: 'EXC-1',
-            clientId: '1',
-            customerName: 'ACME',
-            accountNo: '2',
-            lineNo: '3',
-            status: CaseStatus.verified,
-          ),
-        ),
+        api.verifyCase(verifying),
         throwsA(
           isA<ApiException>().having(
             (e) => e.message,
@@ -566,76 +810,467 @@ void main() {
       );
     });
 
-    /// A stored case, as the Verify tab hands it to the save.
-    CaseItem saved({CaseStatus status = CaseStatus.verified}) => CaseItem(
-      exceptionCode: '4943581-50200031339584-5',
-      clientId: '4943581',
-      customerName: 'ACME',
-      accountNo: '50200031339584',
-      lineNo: '5',
-      healthCheckCategory: 'CAM Expiry Health Check',
-      subCategory: 'Sub',
-      supportSystem: 'LMM',
-      coreSystem: 'FC',
-      exceptionCategory: 'Exception',
-      reason: 'Renewal pending',
-      segment: 'Retail',
-      facility: 'Cash Credit',
-      srNo: '1',
-      maker: 'mk',
-      checker: 'ck',
-      lsrmDate: DateTime.utc(2026, 7, 21),
-      cpu: 'Mumbai',
-      team: 'Cam Renewal Team',
-      status: status,
-    );
-
-    test('a saved case goes out as one row carrying its status', () async {
-      final api = _answering(stored(1, status: 'Verified'));
-
-      await api.updateCase(saved());
-
-      expect(_sent.single.method, 'POST');
-      expect(_sent.single.url.path, '/api/update-smartpointer');
-
-      final row = _lastRows().single;
-      // The whole model, as the bulk submit sends it, so a save does not blank
-      // the columns the panel never shows.
-      expect(row, hasLength(19));
-      // Stated, unlike an upload row: changing it is the point of this save.
-      expect(row['status'], 'Verified');
-      expect(row['segment'], 'Retail');
-      expect(row['facility'], 'Cash Credit');
-    });
-
-    test('the key columns identify the row the server updates', () async {
-      final api = _answering(stored(1, status: 'Verified'));
-
-      await api.updateCase(saved());
-
-      final row = _lastRows().single;
-      // What the server upserts on — get one wrong and the save adds a second
-      // case rather than moving the one on screen.
-      expect(row['client_id'], '4943581');
-      expect(row['account_no'], '50200031339584');
-      expect(row['line_no'], '5');
-      // Dates go out as text, and the serial number too.
-      expect(row['ls_srm_date'], '2026-07-21T00:00:00.000Z');
-      expect(row['sr_no'], '1');
-    });
-
-    test('a save the server does not count still counts the one row', () async {
-      final api = _answering(_envelope(null, message: 'Updated Successfully'));
-
-      final response = await api.updateCase(
-        saved(status: CaseStatus.pendingWithCpu),
+    test('a note carrying a file goes up as multipart', () async {
+      final bodies = <String>[];
+      final api = _api(
+        (_) => http.Response(
+          jsonEncode(_envelope(1, message: 'Updated Successfully')),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+        rawBodies: bodies,
       );
 
-      // The row was written; reporting zero would tell the reviewer their save
-      // was dropped.
-      expect(response.total, 1);
-      expect(response.summary(), '1 case(s) imported');
-      expect(response.rows, isEmpty);
+      await api.verifyCase(
+        VerifyRequest(
+          clientId: '1130488',
+          userId: 'r14878',
+          role: 'Checker',
+          comments: 'Documents in order.',
+          status: ApprovalStatus.approved,
+          supportDocument: CommentAttachment(
+            filename: 'lien.xlsx',
+            bytes: Uint8List.fromList([1, 2, 3]),
+          ),
+        ),
+      );
+
+      expect(_sent.single.url.path, '/api/verify');
+      expect(
+        _sent.single.headers['content-type'],
+        contains('multipart/form-data'),
+      );
+      // The file under the key the service reads it by, and every text value
+      // alongside it — the flags included, since a multipart body it can parse
+      // is the only one it will get.
+      expect(bodies.single, contains('name="supportDocument"'));
+      expect(bodies.single, contains('filename="lien.xlsx"'));
+      expect(bodies.single, contains('name="status"'));
+      expect(bodies.single, contains('Approved'));
+      // The other side's field is present and null, not dropped: the body
+      // keeps one shape whether or not a file rode along, so the two can be
+      // read against each other. A form value is text, so the null is spelled
+      // out — and the server takes it, a missing flag and a `no` the same way.
+      expect(bodies.single, contains('name="isVerified"'));
+      expect(
+        bodies.single,
+        contains('name="isVerified"\r\n\r\nnull\r\n'),
+      );
+      expect(bodies.single, contains('name="comments"'));
+    });
+
+    test('the multipart body carries every key the JSON one does', () async {
+      const checker = VerifyRequest(
+        clientId: '1130488',
+        userId: 'r14878',
+        role: 'Checker',
+        comments: 'Documents in order.',
+        status: ApprovalStatus.approved,
+      );
+
+      // Same request, one shape. A checker never sets `isVerified`, and the
+      // key still goes — dropping it on the multipart path would make the two
+      // bodies disagree about what the contract is.
+      expect(checker.toFields().keys, checker.toJson().keys);
+      // The same null on both paths, said the only way each can say it: JSON
+      // has the value, a form field has only text to spell it with.
+      expect(checker.toFields()['isVerified'], 'null');
+      expect(checker.toJson()['isVerified'], isNull);
+
+      // And the mirror of it, so neither side of the handover is left to
+      // assumption: a maker states `isVerified` and has no `status` to give.
+      const maker = VerifyRequest(
+        clientId: '1130488',
+        userId: 'OFF807292',
+        role: 'Maker',
+        comments: 'Checked in core.',
+        isVerified: true,
+      );
+      expect(maker.toFields()['status'], 'null');
+      expect(maker.toFields()['isVerified'], 'yes');
+      expect(maker.toJson()['status'], isNull);
+    });
+
+    test('a note with no file stays a plain JSON post', () async {
+      final api = _answering(_envelope(1, message: 'Updated Successfully'));
+
+      await api.verifyCase(verifying);
+
+      expect(
+        _sent.single.headers['content-type'],
+        contains('application/json'),
+      );
+    });
+
+    test('a failure the envelope reports on a 200 is still raised', () async {
+      final api = _answering(
+        _envelope(
+          null,
+          code: 1,
+          success: false,
+          message: 'clientId and userId are required.',
+        ),
+      );
+
+      await expectLater(
+        api.verifyCase(verifying),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            'clientId and userId are required.',
+          ),
+        ),
+      );
+    });
+  });
+
+  group('${ApiEndpoints.getComments} / ${ApiEndpoints.addComment}', () {
+    const thread = GetCommentsRequest(clientId: '1130488', userId: 'r14878');
+
+    Map<String, dynamic> comment({
+      String role = 'Checker',
+      String text = 'Checked in core',
+    }) => {
+      'clientId': '1130488',
+      'userId': 'r14878',
+      'role': role,
+      'comments': text,
+      'createdAt': '2026-08-11T12:13:00.000Z',
+    };
+
+    test('the thread is read by case and by caller', () async {
+      final api = _answering(
+        _envelope({
+          'comments': [comment(), comment(role: 'Maker', text: 'Ack')],
+        }),
+      );
+
+      final response = await api.fetchComments(thread);
+
+      expect(_sent.single.method, 'GET');
+      expect(_sent.single.url.queryParameters, {
+        'clientId': '1130488',
+        'userId': 'r14878',
+      });
+      expect(
+        [for (final c in response.comments) c.comments],
+        ['Checked in core', 'Ack'],
+      );
+      // The template is what the thread shows as the author — a note from the
+      // CPU side reads differently from one from the health check.
+      expect(response.comments.first.author, 'Checker');
+      expect(
+        response.comments.first.createdAt,
+        DateTime.parse('2026-08-11T12:13:00.000Z').toLocal(),
+      );
+    });
+
+    test('a case nobody has commented on is a result, not an error', () async {
+      final api = _answering(_envelope({'comments': <dynamic>[]}));
+
+      final response = await api.fetchComments(thread);
+
+      expect(response.isSuccess, isTrue);
+      expect(response.comments, isEmpty);
+    });
+
+    test('a comment carrying no template falls back to its author', () async {
+      final api = _answering(
+        _envelope({
+          'comments': [comment(role: '')],
+        }),
+      );
+
+      final response = await api.fetchComments(thread);
+
+      // An author line is never blank: the employee code stands in.
+      expect(response.comments.single.author, 'r14878');
+    });
+
+    test('a failure the envelope reports on a 200 is still raised', () async {
+      final api = _answering(
+        _envelope(
+          null,
+          code: 1,
+          success: false,
+          message: 'clientId and userId are required.',
+        ),
+      );
+
+      await expectLater(
+        api.fetchComments(thread),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            'clientId and userId are required.',
+          ),
+        ),
+      );
+    });
+
+    test('a note carrying a file goes up as multipart', () async {
+      final bodies = <String>[];
+      final api = _api(
+        (_) => http.Response(
+          jsonEncode(
+            _envelope({
+              'comment': {
+                'id': 1,
+                'clientId': '1130488',
+                'userId': 'r14878',
+                'role': 'Checker',
+                'comments': 'asd',
+                'supportDocument': 'lien.xlsx',
+                'createdAt': '2026-08-11T12:31:50.576409Z',
+              },
+            }, message: 'Comment Added'),
+          ),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+        rawBodies: bodies,
+      );
+
+      final response = await api.addComment(
+        AddCommentRequest(
+          clientId: '1130488',
+          userId: 'r14878',
+          comments: 'asd',
+          role: 'Checker',
+          supportDocument: CommentAttachment(
+            filename: 'lien.xlsx',
+            bytes: Uint8List.fromList([1, 2, 3]),
+          ),
+        ),
+      );
+
+      expect(_sent.single.method, 'POST');
+      expect(_sent.single.url.path, '/api/addComment');
+      expect(
+        _sent.single.headers['content-type'],
+        contains('multipart/form-data'),
+      );
+      // The file under the key the service reads it by, and the four text
+      // values alongside it rather than in a JSON body it will never parse.
+      expect(bodies.single, contains('name="supportDocument"'));
+      expect(bodies.single, contains('filename="lien.xlsx"'));
+      expect(bodies.single, contains('name="clientId"'));
+      expect(bodies.single, contains('name="comments"'));
+      expect(bodies.single, contains('name="role"'));
+      expect(response.comment?.supportDocument, 'lien.xlsx');
+    });
+
+    test('a note with no file stays a plain JSON post', () async {
+      final api = _answering(
+        _envelope({
+          'comment': {
+            'id': 2,
+            'clientId': '1130488',
+            'userId': 'r14878',
+            'comments': 'no file',
+            'createdAt': '2026-08-11T12:31:50.576409Z',
+          },
+        }, message: 'Comment Added'),
+      );
+
+      await api.addComment(
+        const AddCommentRequest(
+          clientId: '1130488',
+          userId: 'r14878',
+          comments: 'no file',
+          role: 'Checker',
+        ),
+      );
+
+      // Unchanged for the common case: a comment on its own is still JSON.
+      expect(
+        _sent.single.headers['content-type'],
+        contains('application/json'),
+      );
+      expect(_lastJson()['comments'], 'no file');
+      expect(_lastJson().containsKey('supportDocument'), isFalse);
+    });
+
+    test('a posted comment goes out as the four fields', () async {
+      final api = _answering(_envelope({'comment': comment()}));
+
+      final response = await api.addComment(
+        const AddCommentRequest(
+          clientId: '1130488',
+          userId: 'r14878',
+          comments: 'Checked in core',
+          role: 'Checker',
+        ),
+      );
+
+      expect(_sent.single.method, 'POST');
+      expect(_lastJson(), {
+        'clientId': '1130488',
+        'userId': 'r14878',
+        'comments': 'Checked in core',
+        'role': 'Checker',
+      });
+      // What was stored, not what was sent: the stamp is the server's.
+      expect(response.comment?.createdAt, isNotNull);
+      expect(response.comment?.comments, 'Checked in core');
+    });
+
+    test('an acknowledged write that echoes nothing is still a success', () {
+      // The thread is re-read after a post, so a server that answers with an
+      // empty envelope has still done the job.
+      final response = AddCommentResponse.fromBody(_envelope(null));
+
+      expect(response.isSuccess, isTrue);
+      expect(response.comment, isNull);
+    });
+
+    test('a rejected comment is raised with the server\'s reason', () async {
+      final api = _answering({
+        'success': false,
+        'message': 'A comment cannot be empty.',
+      }, status: 400);
+
+      await expectLater(
+        api.addComment(
+          const AddCommentRequest(
+            clientId: '1130488',
+            userId: 'r14878',
+            comments: '',
+            role: 'Checker',
+          ),
+        ),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            'A comment cannot be empty.',
+          ),
+        ),
+      );
+    });
+  });
+
+  group('POST ${ApiEndpoints.reassign}', () {
+    const routing = ReassignRequest(
+      clientId: '2287410',
+      userId: 'OFF807292',
+      role: 'Maker',
+      cpu: 'Chennai',
+      team: 'Disbursement Team',
+      reason: 'Incorrect CPU mapping',
+      comments: 'Wrong team, sending this back.',
+    );
+
+    test('the record, the destination and why go out', () async {
+      final api = _answering(
+        _envelope(1, message: 'Successfully assigned to new user'),
+      );
+
+      final response = await api.reassignCase(routing);
+
+      expect(_sent.single.method, 'POST');
+      expect(_sent.single.url.path, '/api/reassign');
+      expect(_lastJson(), {
+        'clientId': '2287410',
+        'userId': 'OFF807292',
+        'role': 'Maker',
+        'cpu': 'Chennai',
+        'team': 'Disbursement Team',
+        'reason': 'Incorrect CPU mapping',
+        'comments': 'Wrong team, sending this back.',
+        // Null with no file: the name is all this key carries, and the bytes
+        // ride as the multipart file when there are any.
+        'document': null,
+      });
+      // A sentence to show the reviewer, not a count of rows.
+      expect(response.message, 'Successfully assigned to new user');
+      expect(response.movedCount, 1);
+    });
+
+    test('a document goes up as multipart, under its own key', () async {
+      final bodies = <String>[];
+      final api = _api(
+        (_) => http.Response(
+          jsonEncode(
+            _envelope(1, message: 'Successfully assigned to new user'),
+          ),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+        rawBodies: bodies,
+      );
+
+      await api.reassignCase(
+        ReassignRequest(
+          clientId: '2287410',
+          userId: 'OFF807292',
+          role: 'Maker',
+          cpu: 'Chennai',
+          team: 'Disbursement Team',
+          document: CommentAttachment(
+            filename: 'handover.pdf',
+            bytes: Uint8List.fromList([1, 2, 3]),
+          ),
+        ),
+      );
+
+      expect(
+        _sent.single.headers['content-type'],
+        contains('multipart/form-data'),
+      );
+      expect(bodies.single, contains('name="document"'));
+      expect(bodies.single, contains('filename="handover.pdf"'));
+      expect(bodies.single, contains('name="cpu"'));
+      expect(bodies.single, contains('name="team"'));
+    });
+
+    test(
+      'a service that sends no message still has something to say',
+      () async {
+        final api = _answering(_envelope(1, message: ''));
+
+        final response = await api.reassignCase(routing);
+
+        // The toast is what the reviewer sees; an empty one reads as nothing
+        // having happened.
+        expect(response.toastText, 'Successfully assigned to new user');
+      },
+    );
+
+    test('a refused reassignment is raised, not reported as done', () async {
+      final api = _answering({
+        'success': false,
+        'message': 'A reassignment needs both a CPU and a team.',
+      }, status: 400);
+
+      await expectLater(
+        api.reassignCase(routing),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.message,
+            'message',
+            'A reassignment needs both a CPU and a team.',
+          ),
+        ),
+      );
+    });
+
+    test('a failure the envelope reports on a 200 is still raised', () async {
+      final api = _answering(
+        _envelope(
+          null,
+          code: 1,
+          success: false,
+          message: 'Only the health check side can reassign a record.',
+        ),
+      );
+
+      await expectLater(
+        api.reassignCase(routing),
+        throwsA(isA<ApiException>()),
+      );
     });
   });
 

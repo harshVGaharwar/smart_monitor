@@ -1,4 +1,4 @@
-import '../data/mock_data.dart';
+import '../data/master_data.dart';
 
 /// A row read from an uploaded cases file.
 ///
@@ -103,15 +103,12 @@ class PendingCase {
   bool get cpuValid => cpu != null;
   bool get teamValid => team != null;
   bool get exceptionValid =>
-      MockData.exceptionCategories.contains(exceptionCategory);
+      MasterData.exceptionCategories.contains(exceptionCategory);
   bool get healthCheckValid =>
-      MockData.healthCheckCategories.contains(healthCheckCategory);
+      MasterData.healthCheckCategories.contains(healthCheckCategory);
 
   bool get hasErrors =>
       !cpuValid || !teamValid || !exceptionValid || !healthCheckValid;
-
-  /// A row can only be imported once every validated field resolves.
-  bool get isComplete => !hasErrors;
 
   /// Field labels that failed validation, for the error export.
   List<String> get errorFields => [

@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 extension Responsive on BuildContext {
   Size get screenSize => MediaQuery.sizeOf(this);
   double get screenWidth => screenSize.width;
-  double get screenHeight => screenSize.height;
 
   /// Phones / very narrow windows — sidebar moves into a drawer.
   bool get isMobile => screenWidth < 720;

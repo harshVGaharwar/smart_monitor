@@ -106,8 +106,16 @@ class ApiClient {
     if (fields != null) request.fields.addAll(fields);
 
     final started = DateTime.now();
-    // The bytes are not logged — a workbook is megabytes of nothing readable.
-    _logSent('POST', uri, '$filename, ${_size(bytes.lengthInBytes)}');
+    // The bytes are not logged — a workbook is megabytes of nothing readable —
+    // but the fields beside them are. They are the whole contract on this path,
+    // and a line carrying only the filename made a flag that did go out look
+    // like one that never did.
+    _logSent(
+      'POST',
+      uri,
+      '$filename, ${_size(bytes.lengthInBytes)}'
+      '${request.fields.isEmpty ? '' : '  ${jsonEncode(request.fields)}'}',
+    );
 
     try {
       final streamed = await _client

@@ -85,17 +85,6 @@ class ApiEnvelope {
     ];
   }
 
-  /// The row count the server reported, falling back to [parsed].
-  ///
-  /// `count` is 0 on responses that plainly carry rows — it counts something
-  /// else — so it is only read when it says something, and never above what
-  /// actually arrived, or the footer would claim records the grid cannot show.
-  int countOr(int parsed) {
-    if (body is! Map) return parsed;
-    final stated = _int((body! as Map)['count']) ?? 0;
-    return stated > 0 && stated <= parsed ? stated : parsed;
-  }
-
   /// [value] as an int, or null when it is absent or unparseable.
   static int? _int(Object? value) {
     if (value is int) return value;

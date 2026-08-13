@@ -10,10 +10,10 @@ import 'table_scroll_frame.dart';
 enum _SortKey {
   client,
   description,
+  reason,
   cpu,
   team,
   date,
-  activity,
   lastMessage,
   customer,
   account,
@@ -33,11 +33,6 @@ class _Col {
   /// value leave it null and get no filter dropdown.
   final String Function(CaseItem)? value;
 
-  /// Fixed filter choices, for a column whose slices are set by the workflow
-  /// rather than by whatever values the rows happen to carry. Left null, the
-  /// dropdown offers the distinct values present in the data instead.
-  final List<String>? options;
-
   /// How the column paints a row. Held here so the list below is the only
   /// place column order is written down — heading, filter and cell all follow
   /// it, and reordering cannot leave a cell under the wrong heading.
@@ -52,16 +47,12 @@ class _Col {
     this.options,
   });
 
+  /// The filter's options, when listing them alphabetically would be wrong.
+  /// Dates are the case: `05 Aug` sorting before `21 Jul` reads as a bug.
+  final List<String> Function(List<CaseItem>)? options;
+
   bool get filterable => value != null;
 }
-
-/// The statuses the STATUS filter always offers, whether or not a row is
-/// currently in one — they are part of the workflow, so a week where nobody
-/// happens to be waiting on the health checker should not make that choice
-/// disappear.
-final List<String> _statusOptions = [
-  for (final s in CaseStatus.assignable) s.label,
-];
 
 /// The dashboard record grid.
 class CasesTable extends StatefulWidget {
@@ -70,7 +61,21 @@ class CasesTable extends StatefulWidget {
   /// Opens the detail drawer for a record, on a specific tab.
   final void Function(CaseItem, CaseDetailTab) onOpenCase;
 
-  const CasesTable({super.key, required this.cases, required this.onOpenCase});
+  /// The tabs the drawer will offer, from [tabsFor]. A row action that opens a
+  /// tab this reader does not have would land them on Basic Info instead, so
+  /// the icon is left out rather than shown doing nothing.
+  final List<CaseDetailTab> tabs;
+
+  /// Whether the per-row checkbox is offered — the "tick in dashboard" right.
+  final bool canTick;
+
+  const CasesTable({
+    super.key,
+    required this.cases,
+    required this.onOpenCase,
+    required this.tabs,
+    required this.canTick,
+  });
 
   @override
   State<CasesTable> createState() => _CasesTableState();
@@ -102,6 +107,10 @@ class _CasesTableState extends State<CasesTable> {
       label: 'CLIENT ID',
       width: 130,
       sort: _SortKey.client,
+      // Filterable like the rest: a client with several exceptions across
+      // categories is the one slice a reader most often wants, and reaching
+      // for the search box to get it means retyping the id on every visit.
+      value: (c) => c.clientId,
       cell: _clientCell,
     ),
     _Col(
@@ -118,16 +127,23 @@ class _CasesTableState extends State<CasesTable> {
       value: (c) => c.cpu,
       cell: (c) => _strong(c.cpu),
     ),
-    // Filters on the line the cell leads with — the specific failure, or the
-    // check that raised the record where no reason was captured. The italic
-    // second line is the same check, so matching it too would only ever
-    // widen a slice the reader already sees.
+    // The check that raised the record, and beside it what actually failed.
+    // One column carried both until reason got its own: the check is the
+    // slice a reader filters by, the reason is the sentence they read, and
+    // pairing them meant the filter offered a different set per row.
     _Col(
       label: 'DESCRIPTION',
       width: 240,
       sort: _SortKey.description,
-      value: _description,
+      value: (c) => c.healthCheckCategory,
       cell: _descriptionCell,
+    ),
+    _Col(
+      label: 'REASON',
+      width: 280,
+      sort: _SortKey.reason,
+      value: (c) => c.reason,
+      cell: _reasonCell,
     ),
     _Col(
       label: 'TEAM',
@@ -140,20 +156,22 @@ class _CasesTableState extends State<CasesTable> {
       label: 'STATUS',
       width: 150,
       value: _statusLabel,
-      options: _statusOptions,
       cell:
           (c) => Align(
             alignment: Alignment.centerLeft,
             child: StatusBadge(status: c.status),
           ),
     ),
-    _Col(label: 'DATE', width: 130, sort: _SortKey.date, cell: _dateCell),
     _Col(
-      label: 'ACTIVITY',
-      width: 150,
-      sort: _SortKey.activity,
-      value: (c) => c.lastActivity?.type.label ?? '',
-      cell: _activityCell,
+      label: 'DATE',
+      width: 130,
+      sort: _SortKey.date,
+      // Filters on the text the cell shows, so picking an option and reading
+      // the column agree. Ordered by the date behind it rather than by that
+      // text — see [_Col.options].
+      value: (c) => _date(_rowDate(c)),
+      options: _dateOptions,
+      cell: _dateCell,
     ),
     _Col(label: 'MESSAGE', width: 120, cell: _messageCell),
     _Col(
@@ -200,7 +218,9 @@ class _CasesTableState extends State<CasesTable> {
   ];
 
   double get _totalWidth =>
-      _checkboxWidth +
+      // Dropped along with the column, or every row would carry 52px of empty
+      // gutter and scroll further than it has content for.
+      (widget.canTick ? _checkboxWidth : 0) +
       _cols.fold(0.0, (sum, c) => sum + c.width) +
       _actionsWidth +
       _rowPadding * 2;
@@ -257,29 +277,43 @@ class _CasesTableState extends State<CasesTable> {
   /// [_filtered] — a dropdown that shed its options as soon as a sibling
   /// filter was set would be a one-way trip.
   ///
-  /// A column declaring [_Col.options] offers exactly those and nothing else:
-  /// they are the workflow's own list, so one goes on being offered through a
-  /// week where no record happens to be in it, and a value the data carries
-  /// that the workflow does not name never joins them. STATUS is the reason —
-  /// the dashboard has two statuses, and a stray value arriving on a row must
-  /// not quietly become a third choice in the dropdown.
+  /// STATUS is derived like the rest: the rows arrive as one user's queue, so
+  /// the statuses present are the statuses that can be here. A fixed list of
+  /// the workflow's own buckets would offer the other side's, which behind
+  /// this grid could only ever come back empty.
   List<String> _optionsFor(_Col col) {
-    final fixed = col.options;
-    if (fixed != null) return fixed;
+    final build = col.options;
+    if (build != null) return build(widget.cases);
 
     final present = <String>{for (final c in widget.cases) col.value!(c)}
       ..removeWhere((v) => v.isEmpty);
     return present.toList()..sort();
   }
 
+  /// The dates on screen, newest first.
+  ///
+  /// Ordered on the [DateTime] and formatted afterwards: the cell's text sorts
+  /// alphabetically, which would put every August before every July. Rows
+  /// carrying no date are left out — there is nothing to filter them by.
+  static List<String> _dateOptions(List<CaseItem> cases) {
+    final dates = <DateTime>[
+      for (final c in cases)
+        if (_rowDate(c) case final d?) d,
+    ]..sort((a, b) => b.compareTo(a));
+
+    // Two stamps on the same day read as one option, and the first wins so the
+    // order above is kept.
+    return <String>{for (final d in dates) _date(d)}.toList();
+  }
+
   List<CaseItem> get _sorted {
     String keyOf(CaseItem c) => switch (_sortKey) {
       _SortKey.client => c.clientId,
-      _SortKey.description => _description(c),
+      _SortKey.description => c.healthCheckCategory,
+      _SortKey.reason => c.reason,
       _SortKey.cpu => c.cpu,
       _SortKey.team => c.team,
       _SortKey.date => '',
-      _SortKey.activity => c.lastActivity?.type.label ?? '',
       _SortKey.lastMessage => c.updatedNote,
       _SortKey.customer => c.customerName,
       _SortKey.account => c.accountNo,
@@ -306,11 +340,6 @@ class _CasesTableState extends State<CasesTable> {
     });
     return list;
   }
-
-  /// What the Description column reads from — the specific failure text, or
-  /// the check that raised the record when no reason was captured.
-  static String _description(CaseItem c) =>
-      c.reason.isNotEmpty ? c.reason : c.healthCheckCategory;
 
   /// The Date column: when the record last moved, falling back to when it was
   /// assigned and then to the LS/RM date.
@@ -391,23 +420,28 @@ class _CasesTableState extends State<CasesTable> {
           padding: const EdgeInsets.symmetric(horizontal: _rowPadding),
           child: Row(
             children: [
-              SizedBox(
-                width: _checkboxWidth,
-                child: _checkbox(
-                  value: allSelected ? true : (anySelected ? null : false),
-                  tristate: true,
-                  onChanged:
-                      (v) => setState(() {
-                        // Null is the indeterminate leg of the cycle; from there
-                        // the useful move is to finish selecting, not to clear.
-                        if (v ?? false) {
-                          _selected.addAll(rows.map((c) => c.exceptionCode));
-                        } else {
-                          _selected.removeAll(rows.map((c) => c.exceptionCode));
-                        }
-                      }),
+              // Left out entirely, not disabled: a column of dead boxes reads
+              // as a broken grid rather than as a right this reader lacks.
+              if (widget.canTick)
+                SizedBox(
+                  width: _checkboxWidth,
+                  child: _checkbox(
+                    value: allSelected ? true : (anySelected ? null : false),
+                    tristate: true,
+                    onChanged:
+                        (v) => setState(() {
+                          // Null is the indeterminate leg of the cycle; from there
+                          // the useful move is to finish selecting, not to clear.
+                          if (v ?? false) {
+                            _selected.addAll(rows.map((c) => c.exceptionCode));
+                          } else {
+                            _selected.removeAll(
+                              rows.map((c) => c.exceptionCode),
+                            );
+                          }
+                        }),
+                  ),
                 ),
-              ),
               for (final col in _cols)
                 SizedBox(width: col.width, child: _headerCell(col)),
               const SizedBox(
@@ -442,7 +476,9 @@ class _CasesTableState extends State<CasesTable> {
       padding: const EdgeInsets.symmetric(horizontal: _rowPadding, vertical: 7),
       child: Row(
         children: [
-          const SizedBox(width: _checkboxWidth),
+          // Aligns the filters under their headings, so it goes when the tick
+          // column does.
+          if (widget.canTick) const SizedBox(width: _checkboxWidth),
           for (final col in _cols)
             SizedBox(
               width: col.width,
@@ -596,20 +632,21 @@ class _CasesTableState extends State<CasesTable> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(
-            width: _checkboxWidth,
-            child: _checkbox(
-              value: _selected.contains(c.exceptionCode),
-              onChanged:
-                  (v) => setState(() {
-                    if (v ?? false) {
-                      _selected.add(c.exceptionCode);
-                    } else {
-                      _selected.remove(c.exceptionCode);
-                    }
-                  }),
+          if (widget.canTick)
+            SizedBox(
+              width: _checkboxWidth,
+              child: _checkbox(
+                value: _selected.contains(c.exceptionCode),
+                onChanged:
+                    (v) => setState(() {
+                      if (v ?? false) {
+                        _selected.add(c.exceptionCode);
+                      } else {
+                        _selected.remove(c.exceptionCode);
+                      }
+                    }),
+              ),
             ),
-          ),
           for (final col in _cols)
             SizedBox(
               width: col.width,
@@ -642,40 +679,49 @@ class _CasesTableState extends State<CasesTable> {
     );
   }
 
-  /// What failed, over the check that raised it. The check is dropped when it
-  /// is already standing in as the description.
+  /// The check that raised the record.
   Widget _descriptionCell(CaseItem c) {
-    final text = _description(c);
-    if (text.isEmpty) return _plain('');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          text,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            height: 1.25,
-            color: AppColors.textPrimary,
-          ),
+    if (c.healthCheckCategory.isEmpty) return _plain('');
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        c.healthCheckCategory,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
+          height: 1.25,
+          color: AppColors.textPrimary,
         ),
-        if (c.reason.isNotEmpty && c.healthCheckCategory.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(
-            c.healthCheckCategory,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-              color: AppColors.textMuted,
-            ),
-          ),
-        ],
-      ],
+      ),
+    );
+  }
+
+  /// What actually failed, in the health check's own words.
+  ///
+  /// Two lines and muted: it is the longest text in the row — a full sentence
+  /// where every other column is a label — so it reads as detail beside the
+  /// check rather than competing with it.
+  Widget _reasonCell(CaseItem c) {
+    if (c.reason.isEmpty) {
+      return const Align(
+        alignment: Alignment.centerLeft,
+        child: Text('—', style: TextStyle(color: AppColors.textMuted)),
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        c.reason,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 12.5,
+          height: 1.3,
+          color: AppColors.textSecondary,
+        ),
+      ),
     );
   }
 
@@ -695,44 +741,11 @@ class _CasesTableState extends State<CasesTable> {
     );
   }
 
-  Widget _activityCell(CaseItem c) {
-    final activity = c.lastActivity;
-    if (activity == null) return _plain('');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Icon(activity.type.icon, size: 14, color: activity.type.color),
-            const SizedBox(width: 5),
-            Flexible(
-              child: Text(
-                activity.type.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: activity.type.color,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          _time(activity.at),
-          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
-        ),
-      ],
-    );
-  }
-
-  /// Message count, opening the record's thread. Reads as a link only when
-  /// there is something to read.
   Widget _messageCell(CaseItem c) {
-    final count = c.comments.length;
+    // The count the queue endpoint sent, not `comments.length` — a grid row is
+    // read without its thread, so counting off that list would report every
+    // case as having none.
+    final count = c.messageCount;
     final label =
         count == 0 ? 'No Messages' : '$count Message${count == 1 ? '' : 's'}';
     final color = count == 0 ? AppColors.textMuted : AppColors.primaryLight;
@@ -843,16 +856,18 @@ class _CasesTableState extends State<CasesTable> {
           tooltip: 'View details',
           onTap: () => widget.onOpenCase(c, CaseDetailTab.basicInfo),
         ),
-        _actionIcon(
-          icon: Icons.check_circle_outline_rounded,
-          tooltip: 'Verify',
-          onTap: () => widget.onOpenCase(c, CaseDetailTab.verify),
-        ),
-        _actionIcon(
-          icon: Icons.swap_horiz_rounded,
-          tooltip: 'Reassign',
-          onTap: () => widget.onOpenCase(c, CaseDetailTab.reassign),
-        ),
+        if (widget.tabs.contains(CaseDetailTab.verify))
+          _actionIcon(
+            icon: Icons.check_circle_outline_rounded,
+            tooltip: 'Verify',
+            onTap: () => widget.onOpenCase(c, CaseDetailTab.verify),
+          ),
+        if (widget.tabs.contains(CaseDetailTab.reassign))
+          _actionIcon(
+            icon: Icons.swap_horiz_rounded,
+            tooltip: 'Reassign',
+            onTap: () => widget.onOpenCase(c, CaseDetailTab.reassign),
+          ),
       ],
     );
   }
@@ -1025,10 +1040,4 @@ class _CasesTableState extends State<CasesTable> {
         '${d.year}';
   }
 
-  static String _time(DateTime d) {
-    final hour = d.hour % 12 == 0 ? 12 : d.hour % 12;
-    final minute = d.minute.toString().padLeft(2, '0');
-    return '${hour.toString().padLeft(2, '0')}:$minute '
-        '${d.hour < 12 ? 'AM' : 'PM'}';
-  }
 }

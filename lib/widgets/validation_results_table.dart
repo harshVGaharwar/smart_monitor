@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import '../data/mock_data.dart';
+import '../data/master_data.dart';
 import '../models/pending_case.dart';
 import 'searchable_dropdown.dart';
 import 'table_scroll_frame.dart';
@@ -33,11 +33,36 @@ class _Col {
     this.kind = _CellKind.text,
   });
 
-  /// Free-text and routing pickers have nothing useful to filter on. The
-  /// health check category is validated but still the natural way to slice the
-  /// report, so it keeps its filter.
+  /// Every column but the three that carry no repeated value: the delete
+  /// button, the client id — unique per row, so its filter would be one entry
+  /// per row — and the free-text reason, which is a sentence rather than a set.
   bool get filterable =>
-      kind == _CellKind.text || kind == _CellKind.healthCheck;
+      kind != _CellKind.delete &&
+      kind != _CellKind.client &&
+      kind != _CellKind.reason;
+
+  /// Whether a row is rejected when this column's value is not recognised.
+  ///
+  /// The same four `hasErrors` checks, read off the column rather than
+  /// restated: a heading marked mandatory that does not actually fail a row —
+  /// or the reverse — is worse than no marking at all.
+  bool get mandatory => masterOptions != null;
+
+  /// The master list this column's values come from, or null for a column the
+  /// file alone decides.
+  ///
+  /// A validated column filters against the master rather than against what
+  /// the file happened to contain: the four here are the ones the user is
+  /// correcting, and "show me the rows that should be Chennai" is a question
+  /// worth asking even when no row says Chennai yet. The rest have no master —
+  /// there is nothing to offer but the file's own values.
+  List<String>? get masterOptions => switch (kind) {
+    _CellKind.healthCheck => MasterData.healthCheckCategories,
+    _CellKind.exception => MasterData.exceptionCategories,
+    _CellKind.cpu => MasterData.cpus,
+    _CellKind.team => MasterData.teams,
+    _ => null,
+  };
 }
 
 /// The validation report: every row the file contained, with cells the master
@@ -181,11 +206,26 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
   /// Only the master categories. Offering the file's own rejected values here
   /// would let the user "fix" a cell by picking the very value that failed —
   /// the rejected text is shown through the closed button's hint instead.
-  List<String> get _exceptionOptions => MockData.exceptionCategories;
+  List<String> get _exceptionOptions => MasterData.exceptionCategories;
 
+  /// What a column's filter offers.
+  ///
+  /// A validated column offers its master list, so the choices are the same
+  /// ones the cell editor offers and do not shift as the user corrects rows.
+  /// Any value on a row that the master does not name is appended — a file's
+  /// unrecognised CPU is exactly what someone filtering this report is looking
+  /// for, and leaving it out would hide the rows that need the work.
   List<String> _optionsFor(_Col col) {
-    final set = <String>{for (final r in widget.rows) col.value(r)};
-    return set.where((v) => v.isNotEmpty).toList()..sort();
+    final master = col.masterOptions;
+    final onRows = <String>{for (final r in widget.rows) col.value(r)}
+      ..removeWhere((v) => v.isEmpty);
+
+    if (master == null) return onRows.toList()..sort();
+
+    // Master order first — it is the order the cell editor offers them in —
+    // then whatever the file said that the master does not name.
+    final unknown = onRows.where((v) => !master.contains(v)).toList()..sort();
+    return [...master, ...unknown];
   }
 
   /// Re-checks validity after an inline edit and lets the parent's stats strip
@@ -320,24 +360,50 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
                 padding: const EdgeInsets.symmetric(horizontal: 6),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(
-                    col.label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.4,
-                      color:
-                          _filters.containsKey(col.label)
-                              ? AppColors.textPrimary
-                              : AppColors.textSecondary,
-                    ),
-                  ),
+                  child: _heading(col),
                 ),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  /// A column heading, with a red asterisk on the four the file must get
+  /// right.
+  ///
+  /// One `Text.rich` rather than a Row so the star ellipses away with the
+  /// label it belongs to — a narrow column would otherwise clip the heading
+  /// and leave a floating star.
+  Widget _heading(_Col col) {
+    final style = TextStyle(
+      fontSize: 11.5,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.4,
+      color:
+          _filters.containsKey(col.label)
+              ? AppColors.textPrimary
+              : AppColors.textSecondary,
+    );
+
+    if (!col.mandatory) {
+      return Text(col.label, overflow: TextOverflow.ellipsis, style: style);
+    }
+
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: col.label),
+          TextSpan(
+            text: ' *',
+            style: const TextStyle(color: AppColors.danger),
+          ),
+        ],
+      ),
+      overflow: TextOverflow.ellipsis,
+      style: style,
+      // Read out as the column being required rather than as a stray star.
+      semanticsLabel: '${col.label}, required',
     );
   }
 
@@ -503,7 +569,7 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
           valid: r.cpuValid,
           display: r.cpuDisplay,
           value: r.cpu,
-          options: MockData.cpus,
+          options: MasterData.cpus,
           onChanged: (v) {
             r.cpu = v;
             _rowEdited();
@@ -515,7 +581,7 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
           valid: r.teamValid,
           display: r.teamDisplay,
           value: r.team,
-          options: MockData.teams,
+          options: MasterData.teams,
           onChanged: (v) {
             r.team = v;
             _rowEdited();
@@ -530,7 +596,7 @@ class _ValidationResultsTableState extends State<ValidationResultsTable> {
               r.healthCheckCategory.trim().isEmpty
                   ? null
                   : r.healthCheckCategory,
-          options: MockData.healthCheckCategories,
+          options: MasterData.healthCheckCategories,
           onChanged: (v) {
             r.healthCheckCategory = v ?? '';
             _rowEdited();
